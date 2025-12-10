@@ -2,11 +2,42 @@ import streamlit as st
 import openai
 import google.generativeai as genai
 import json
-import re
-import os
+import time
+from datetime import date
 
-# --- 1. CONFIGURATION ---
-st.set_page_config(page_title="DistroPro QC Engine", layout="wide")
+# --- 1. CONFIGURATION & STYLING ---
+st.set_page_config(page_title="DistroBot Smart Chat", layout="centered", page_icon="🎵")
+
+# Custom CSS for "Smart Options" buttons to look like chat pills
+st.markdown("""
+    <style>
+        .stButton > button {
+            border-radius: 20px;
+            border: 1px solid #E0E0E0;
+            background-color: #F8F9FA;
+            color: #31333F;
+            padding: 5px 15px;
+            font-size: 14px;
+            margin-right: 5px;
+        }
+        .stButton > button:hover {
+            border-color: #FF4B4B;
+            color: #FF4B4B;
+        }
+        .chat-bubble {
+            padding: 15px;
+            border-radius: 15px;
+            background-color: #f0f2f6;
+            margin-bottom: 10px;
+            display: inline-block;
+        }
+        .user-bubble {
+            background-color: #e7f3ff;
+            text-align: right;
+            float: right;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 # Retrieve Keys
 openai_key = st.secrets.get("OPENAI_API_KEY")
@@ -16,240 +47,236 @@ groq_key = st.secrets.get("GROQ_API_KEY")
 if gemini_key:
     genai.configure(api_key=gemini_key)
 
-# --- 2. OFFICIAL POLICY DOCUMENTATION ---
-OFFICIAL_POLICY_DOC = """
-I. Background 
-The goal is to facilitate healthier and more accurate submissions, significantly reducing the likelihood of rejection by our QC team.
+# --- 2. WORKFLOW DEFINITION (THE MAP) ---
+# This defines the Linear Flow. 
+# Types: 'text', 'selection', 'date', 'file', 'bool'
 
-II. Document Purpose. 
-4. Detail the validation restrictions, including a list of forbidden words, for each field 
+WORKFLOW_STEPS = [
+    {
+        "id": "release_title",
+        "prompt": "Let's start your release! 🚀\n\n**What is the Title of your Single or Album?**",
+        "type": "text",
+        "validation_rule": "No 'feat', 'prod', or special chars like @#$%. Brackets () are okay."
+    },
+    {
+        "id": "version",
+        "prompt": "Is there a specific **Version** for this release?\n(e.g., Acoustic, Remix, Live). If it's the original, just click 'Skip'.",
+        "type": "text",
+        "optional": True,
+        "validation_rule": "No 'Original', 'Explicit', 'Official'."
+    },
+    {
+        "id": "artist_name",
+        "prompt": "Got it. **What is the Primary Artist Name?**",
+        "type": "text",
+        "validation_rule": "Must be the artist name only. Do not add 'feat. Drake' here."
+    },
+    {
+        "id": "genre",
+        "prompt": "Nice name. **What is the primary Genre?**",
+        "type": "selection",
+        "options": ["Pop", "Hip-Hop/Rap", "Rock", "Electronic", "R&B", "Latin", "Country", "Jazz", "Classical", "Alternative"]
+    },
+    {
+        "id": "release_date",
+        "prompt": "When should this go live?",
+        "type": "selection",
+        "options": ["As Soon As Possible", "Specific Date"]
+    },
+    {
+        "id": "upc_label",
+        "prompt": "Do you have a Label Name? (Optional)",
+        "type": "text",
+        "optional": True,
+        "validation_rule": "Standard text only."
+    },
+    {
+        "id": "artwork",
+        "prompt": "🎨 **Time for artwork.**\nPlease upload a square (1:1) image, at least 3000x3000px.",
+        "type": "file",
+        "file_types": ["jpg", "png", "jpeg"]
+    },
+    {
+        "id": "track_title",
+        "prompt": "Now for the audio. **What is the Track Title?**",
+        "type": "text",
+        "validation_rule": "Must match Release Title if it's a single."
+    },
+    {
+        "id": "audio_file",
+        "prompt": "Upload your high-quality audio file (WAV/FLAC).",
+        "type": "file",
+        "file_types": ["wav", "flac", "mp3"]
+    },
+    {
+        "id": "explicit",
+        "prompt": "Does this track contain **Explicit Content**?",
+        "type": "selection",
+        "options": ["Clean", "Explicit", "Instrumental"]
+    },
+    {
+        "id": "language",
+        "prompt": "What language are the lyrics in?",
+        "type": "selection",
+        "options": ["English", "Spanish", "French", "German", "Japanese", "No Lyrics (Instrumental)"]
+    },
+    {
+        "id": "composer",
+        "prompt": "Almost done. **Who is the Composer?**\n(Legal First & Last Name required for royalties).",
+        "type": "text",
+        "validation_rule": "Must be 'First Last'. No 'beats' or aliases."
+    }
+]
 
-III. Emojis should not be allowed in any distribution field 
-
-III.a Fields & Validations 1st Wizard Step
-
-ID 1: Release Title (Mandatory)
-Field Validations:
-- if the user inputs specific words within parentheses and/or brackets, we throw an exception.
-- Forbidden_Words #1: feat., featuring, produced, prod., feat, ft,ft.
-- Forbidden_Words #2: Acoustic, Remastered, Freestyle, Instrumental, remixed, remix
-- Words 1 -> Special Characters including emojis not allowed here: \/!@#$%^&*+= (Note: Brackets (){}[] ARE allowed).
-Validation Message: Please avoid restricted words like feat, prod, remix.
-
-ID 2: Version (Optional)
-Field Validations:
-- Words 1 -> Special Characters not allowed here: (){}[]\/!@#$%^&*+=
-- Words 2 -> Additional forbidden words: new, featuring, feat, feat., ft, ft., Official, Explicit.
-
-ID 3: Primary Artist (Mandatory)
-Field Validations:
-- Words #1: feat., featuring, produced, prod., feat, ft,ft.
-- Words #2: Acoustic, Remastered, Freestyle, Instrumental, remixed
-We trigger the validation errors only when one or more of the above words have been filled inside brackets.
-Validation Message: Please input contributors in the contributors field.
-
-ID 5: Genre (Mandatory)
-Bottom Sheet: Choose only one primary genre that best represents your release.
-
-ID 11: Composer (Mandatory)
-Description: First and last name of the Artist. Ideally legal name.
-Field Validations:
-- Special Characters not allowed here: (){}[]\/!@#$%^&*+=
-- Forbidden Words: music, beats (automatic rejection from Fuga).
-- Requirement: Must be at least two names (First and Last).
-Validation Message: Provide a legal first and last name (e.g. John Doe).
-
-ID 9: Track Title (Mandatory)
-Field Validations:
-- Forbidden_Words #1: feat., featuring, produced, prod.
-- Forbidden_Words #2: Acoustic, Remastered, Freestyle, Instrumental, remixed, remix
-- Brackets are allowed.
+# --- 3. VALIDATION ENGINE ---
+QC_RULES = """
+RULES:
+1. Release Title: No 'feat', 'prod', 'remix'. No emojis.
+2. Artist Name: No 'feat', 'prod' inside name.
+3. Composer: Must be Legal First & Last Name. No 'beats', 'music'.
+4. General: No emojis in any field.
 """
 
-# --- 3. THE VALIDATION ENGINE ---
-
-class DistroBotStateMachine:
-    def __init__(self):
-        self.steps = {
-            1: {
-                "field": "Release Title",
-                "doc_id": "ID 1",
-                "prompt": "What is the Title of your release?",
-                "error_msg": "Validation Error: Title contains forbidden words (feat, prod) or illegal characters."
-            },
-            2: {
-                "field": "Primary Artist",
-                "doc_id": "ID 3",
-                "prompt": "Great. What is the Primary Artist Name?",
-                "error_msg": "Validation Error: Artist name cannot contain 'feat', 'prod' or brackets with roles."
-            },
-            3: {
-                "field": "Genre",
-                "doc_id": "ID 5",
-                "prompt": "Select the Genre (e.g., Pop, Hip Hop, Rock).",
-                "error_msg": "Please select a valid standard genre."
-            },
-            4: {
-                "field": "Composer",
-                "doc_id": "ID 11",
-                "prompt": "Who is the Composer? (Legal First & Last Name required).",
-                "error_msg": "Validation Error: Composer must be a real name (First Last). No 'music', 'beats', or special characters."
-            },
-            5: {
-                "field": "Confirmation",
-                "doc_id": "Final",
-                "prompt": "Review the data above. Type 'Yes' to submit to QC.",
-                "error_msg": "Type 'Yes' to confirm."
-            }
-        }
-
-    def get_current_config(self, step_number):
-        return self.steps.get(step_number)
-
-# --- 4. HELPER FUNCTIONS ---
-
-def clean_json_response(raw_text):
-    """
-    Robust JSON cleaner that handles Markdown blocks and extra text.
-    """
-    if not raw_text: return None
-    try:
-        # Remove markdown code blocks if present (e.g. ```json ... ```)
-        clean_text = raw_text.replace("```json", "").replace("```", "").strip()
-        
-        # Try finding the first JSON object
-        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-        return json.loads(clean_text)
-    except Exception as e:
-        st.error(f"Debug Info: JSON Parse failed. AI Output: {raw_text}")
-        return None
-
-def query_llm_for_validation(field_name, doc_id, user_input):
-    """
-    Uses JSON Mode to strictly enforce structured output.
-    """
+def validate_with_ai(field_name, user_value):
+    """Sends text input to LLM for strict validation against Confluence rules."""
+    if not user_value: return True, ""
+    
     system_prompt = f"""
-    You are a QC Logic Engine.
-    
-    POLICY:
-    {OFFICIAL_POLICY_DOC}
-    
-    TASK:
-    Analyze input: "{user_input}"
-    Check against Field "{field_name}" (Ref: {doc_id}).
-    
-    STRICT RULES:
-    - If Field is 'Composer', REJECT if it is only one word. It must be First and Last name.
-    - Check for forbidden characters and words.
-    
-    OUTPUT FORMAT:
-    You must output a valid JSON object.
-    {{
-        "value": "Cleaned Input",
-        "valid": true/false,
-        "reason": "Short reason if invalid"
-    }}
+    You are a QC Validator. POLICY: {QC_RULES}
+    Check Field: "{field_name}" Value: "{user_value}"
+    Output JSON: {{"valid": true, "error": ""}} or {{"valid": false, "error": "Reason"}}
     """
-    
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    extracted_text = None
-    
-    # 1. TRY GROQ (With JSON Mode)
-    if groq_key:
-        try:
-            client = openai.OpenAI(base_url="[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)", api_key=groq_key)
+    try:
+        if groq_key:
+            client = openai.OpenAI(base_url="https://api.groq.com/openai/v1", api_key=groq_key)
             resp = client.chat.completions.create(
-                model="llama-3.1-8b-instant", 
-                messages=messages,
-                temperature=0,
-                response_format={"type": "json_object"}  # <--- THE FIX
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "system", "content": system_prompt}],
+                response_format={"type": "json_object"},
+                temperature=0
             )
-            extracted_text = resp.choices[0].message.content
-        except Exception as e:
-            # st.error(f"Groq Error: {e}") # Uncomment to debug
-            pass
+            data = json.loads(resp.choices[0].message.content)
+            return data["valid"], data.get("error", "Invalid format")
+    except:
+        return True, "" # Fail open if AI is down
+    return True, ""
 
-    # 2. FALLBACK TO GEMINI (Text Mode)
-    if not extracted_text and gemini_key:
-        try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            extracted_text = model.generate_content(system_prompt).text
-        except: pass
+# --- 4. APP LOGIC ---
 
-    return clean_json_response(extracted_text)
+# Initialize Session State
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "step_index" not in st.session_state:
+    st.session_state.step_index = 0
+if "data" not in st.session_state:
+    st.session_state.data = {}
+if "processing" not in st.session_state:
+    st.session_state.processing = False
 
-# --- 5. MAIN APP LOGIC ---
+# Helper to Advance Step
+def advance_step(user_input_display, key, value):
+    # 1. Add User Answer to Chat
+    st.session_state.messages.append({"role": "user", "content": user_input_display})
+    # 2. Save Data
+    st.session_state.data[key] = value
+    # 3. Move Index
+    st.session_state.step_index += 1
+    # 4. Rerun to show next bot question
+    st.rerun()
 
-if "fsm" not in st.session_state:
-    st.session_state.fsm = DistroBotStateMachine()
-if "current_step" not in st.session_state:
-    st.session_state.current_step = 1
-if "collected_data" not in st.session_state:
-    st.session_state.collected_data = {}
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+def bot_say(text):
+    with st.chat_message("assistant"):
+        st.markdown(text)
 
-# UI Layout
-st.title("🛡️ Distro QC Bot (Fixed)")
-col1, col2 = st.columns([2, 1])
+# --- 5. MAIN RENDER LOOP ---
 
-# Sidebar: Debug View
-with col2:
-    st.subheader("QC Status")
-    st.json(st.session_state.collected_data)
-    if st.button("Reset Wizard"):
-        st.session_state.current_step = 1
-        st.session_state.collected_data = {}
-        st.session_state.chat_history = []
-        st.rerun()
+st.title("🤖 DistroBot Assistant")
+st.progress(min(st.session_state.step_index / len(WORKFLOW_STEPS), 1.0))
 
-# Chat Area
-with col1:
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+# 1. Display Chat History
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    if len(st.session_state.chat_history) == 0:
-        first_config = st.session_state.fsm.get_current_config(1)
-        st.session_state.chat_history.append({"role": "assistant", "content": first_config["prompt"]})
-        st.rerun()
-
-    if user_input := st.chat_input("Enter details..."):
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        step_idx = st.session_state.current_step
-        step_config = st.session_state.fsm.get_current_config(step_idx)
-
-        if step_idx <= 4:
-            with st.spinner("Validating..."):
-                qc_result = query_llm_for_validation(
-                    step_config["field"], 
-                    step_config["doc_id"], 
-                    user_input
-                )
-
-            if qc_result and qc_result.get("valid") == True:
-                st.session_state.collected_data[step_config["field"]] = qc_result.get("value")
-                st.session_state.current_step += 1
-                next_step = st.session_state.fsm.get_current_config(st.session_state.current_step)
-                bot_reply = next_step["prompt"] if next_step else "Validation Complete. Type 'Yes' to finalize."
+# 2. Check if Flow is Complete
+if st.session_state.step_index >= len(WORKFLOW_STEPS):
+    bot_say("✅ **That's everything!** Here is your release summary:")
+    
+    # Summary Card
+    with st.container():
+        st.markdown("### 💿 Release Preview")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state.data.get("artwork"):
+                st.image(st.session_state.data["artwork"], caption="Cover Art", width=250)
             else:
-                reason = qc_result.get("reason", "Formatting Error") if qc_result else "System Error (JSON Parsing)."
-                bot_reply = f"🚫 **Rejected:** {reason}\n\n*Reference: {step_config['doc_id']}*"
+                st.info("No Artwork Uploaded")
+        with col2:
+            st.write(f"**Title:** {st.session_state.data.get('release_title')}")
+            st.write(f"**Artist:** {st.session_state.data.get('artist_name')}")
+            st.write(f"**Genre:** {st.session_state.data.get('genre')}")
+            st.write(f"**Release Date:** {st.session_state.data.get('release_date')}")
+            st.write(f"**Composer:** {st.session_state.data.get('composer')}")
 
-        elif step_idx == 5:
-            if "yes" in user_input.lower():
-                bot_reply = "✅ Submitted to Distribution Queue."
-                st.balloons()
-            else:
-                bot_reply = "❌ Submission Aborted."
-
-        st.session_state.chat_history.append({"role": "assistant", "content": bot_reply})
-        with st.chat_message("assistant"):
-            st.markdown(bot_reply)
+    if st.button("🚀 Submit to QC"):
+        st.balloons()
+        st.success("Release Submitted Successfully!")
+    
+    if st.button("🔄 Start Over"):
+        st.session_state.clear()
         st.rerun()
+
+    st.stop() # Stop execution here
+
+# 3. Get Current Step Configuration
+current_step = WORKFLOW_STEPS[st.session_state.step_index]
+
+# 4. Display Bot's Question (Only if not already displayed for this step)
+# We assume the last message in history was the user's answer to the PREVIOUS step.
+# So we render the current prompt now.
+bot_say(current_step["prompt"])
+
+# 5. RENDER DYNAMIC INPUTS BASED ON TYPE
+
+# --- TYPE: SELECTION (Smart Buttons) ---
+if current_step["type"] == "selection":
+    st.write("👉 **Select an option:**")
+    cols = st.columns(3) # create a grid of buttons
+    options = current_step["options"]
+    
+    for i, option in enumerate(options):
+        # Distribute buttons across columns
+        if cols[i % 3].button(option, key=f"btn_{current_step['id']}_{i}"):
+            advance_step(option, current_step['id'], option)
+
+# --- TYPE: FILE UPLOAD ---
+elif current_step["type"] == "file":
+    uploaded_file = st.file_uploader(f"Upload {current_step['id']}", type=current_step["file_types"], key=f"file_{current_step['id']}")
+    
+    if uploaded_file:
+        # Show preview
+        if "image" in uploaded_file.type:
+            st.image(uploaded_file, width=200)
+        
+        if st.button("Confirm Upload", key=f"confirm_{current_step['id']}"):
+            advance_step(f"Uploaded {uploaded_file.name}", current_step['id'], uploaded_file)
+
+# --- TYPE: TEXT INPUT (Standard Chat Box) ---
+elif current_step["type"] == "text":
+    # Logic: Text input is tricky in Streamlit loops. We use st.chat_input.
+    
+    # Check for "Skip" option
+    if current_step.get("optional"):
+        if st.button("Skip this step", key=f"skip_{current_step['id']}"):
+            advance_step("Skipped", current_step['id'], "None")
+
+    user_text = st.chat_input("Type your answer here...")
+    
+    if user_text:
+        # Validate logic
+        is_valid, error_msg = validate_with_ai(current_step['id'], user_text)
+        
+        if is_valid:
+            advance_step(user_text, current_step['id'], user_text)
+        else:
+            st.error(f"🚫 {error_msg}")
