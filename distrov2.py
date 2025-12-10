@@ -11,7 +11,7 @@ st.title("Dual-Model Chat App")
 # --- CONFIGURE APIS ---
 openai_key = st.secrets.get("OPENAI_API_KEY")
 gemini_key = st.secrets.get("GEMINI_API_KEY")
-groq_key = st.secrets.get("GROQ_API_KEY")  # <--- NEW KEY FROM SECRETS
+groq_key = st.secrets.get("GROQ_API_KEY")
 
 if gemini_key:
     genai.configure(api_key=gemini_key)
@@ -41,29 +41,35 @@ GEMINI_ROSTER = [
 def get_backup_response(prompt):
     """
     FALLBACK LOGIC:
-    1. Try Groq (Llama 3) - fast & free.
+    1. Try Groq (Llama 3.1) - fast & free.
     2. If Groq fails, try Google Gemini loop.
     """
+    errors = [] # Keep track of what went wrong
     
     # 1. TRY GROQ (Using OpenAI Client)
     if groq_key:
         try:
-            # Groq is compatible with OpenAI's library!
             client = openai.OpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=groq_key
             )
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",  # Free, fast model
+                model="llama-3.1-8b-instant",  # <--- UPDATED MODEL NAME
                 messages=[{"role": "user", "content": prompt}]
             )
-            return f"⚡ [Groq Llama3]: {response.choices[0].message.content}"
+            return f"⚡ [Groq Llama 3.1]: {response.choices[0].message.content}"
         except Exception as e:
-            print(f"Groq failed: {e}")
+            # THIS IS THE CRITICAL CHANGE: We save the error to show you later
+            error_msg = f"Groq Error: {str(e)}"
+            print(error_msg)
+            errors.append(error_msg)
+    else:
+        errors.append("Groq Error: No API Key found in secrets.")
     
     # 2. IF GROQ FAILS, TRY GEMINI
     if not gemini_key:
-        return "❌ Error: No Groq or Gemini keys found."
+        errors.append("Gemini Error: No API Key found.")
+        return f"❌ Configuration Error: {errors}"
 
     for model_name in GEMINI_ROSTER:
         try:
@@ -75,10 +81,11 @@ def get_backup_response(prompt):
             print(f"⚠️ Quota hit for {model_name}. Switching...")
             continue
         except Exception as e:
-            print(f"Error with {model_name}: {e}")
+            errors.append(f"Gemini {model_name}: {str(e)}")
             continue
 
-    return "❌ All systems down: OpenAI, Groq, and Gemini quotas exceeded."
+    # 3. IF EVERYTHING FAILS, SHOW THE LOGS
+    return f"❌ ALL SYSTEMS FAILED.\n\n**Debug Logs:**\n" + "\n".join(errors)
 
 # --- APP LOGIC ---
 
@@ -86,7 +93,6 @@ user_input = st.text_input("Ask me anything:")
 
 if st.button("Submit") and user_input:
     response_text = ""
-    used_model = ""
     
     # 1. TRY OPENAI FIRST
     try:
@@ -96,20 +102,17 @@ if st.button("Submit") and user_input:
             st.write(response_text)
             
     except Exception as e_openai:
-        print(f"OpenAI failed: {e_openai}")
-        
         # 2. FALLBACK TO GROQ -> GEMINI
         try:
             with st.spinner("OpenAI failed. Trying backups (Groq/Gemini)..."):
                 response_text = get_backup_response(user_input)
                 
-                if "Error" in response_text or "All systems down" in response_text:
-                    st.error(response_text)
+                if "❌" in response_text:
+                    st.error(response_text) # This will now show the REAL error
                 else:
                     st.warning(f"⚠️ Backup Successful")
                     st.write(response_text)
                 
         except Exception as e_backup:
-            st.error("Critical Failure: All AI models failed.")
-            st.error(f"Details: {e_backup}")
-
+            st.error("Critical Failure.")
+            st.write(e_backup)
