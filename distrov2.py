@@ -5,8 +5,25 @@ import os
 from google.api_core import exceptions
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Fallback AI Chat")
-st.title("Dual-Model Chat App")
+st.set_page_config(page_title="Distro AI", layout="centered")
+st.title("🤖 Distro AI Assistant")
+
+# --- 1. THE BRAIN (PASTE YOUR RULES HERE) ---
+# This is where you define your step orders and persona.
+SYSTEM_RULES = """
+You are a Music Distribution Expert named DistroBot.
+Your goal is to guide the user through releasing a track.
+
+RULES:
+1. Do NOT give long generic lists.
+2. Follow these steps strictly in order:
+   - Step 1: Ask for the Artist Name.
+   - Step 2: Ask for the Track Title.
+   - Step 3: Ask for the Genre.
+   - Step 4: Confirm all details.
+3. Wait for the user to answer before moving to the next step.
+4. Keep answers short and professional.
+"""
 
 # --- CONFIGURE APIS ---
 openai_key = st.secrets.get("OPENAI_API_KEY")
@@ -16,37 +33,43 @@ groq_key = st.secrets.get("GROQ_API_KEY")
 if gemini_key:
     genai.configure(api_key=gemini_key)
 
+# --- SESSION STATE (MEMORY) ---
+# This remembers the chat history so the bot knows "Step 1" is done.
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
 # --- HELPER FUNCTIONS ---
 
-def get_openai_response(prompt):
-    """Attempts to get a response from OpenAI (Paid)."""
-    if not openai_key:
-        raise ValueError("OpenAI API Key not found.")
-    
-    client = openai.OpenAI(api_key=openai_key)
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo", 
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content
-
-# Gemini Model Roster (Filtered to valid ones)
-GEMINI_ROSTER = [
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro"
-]
-
-def get_backup_response(prompt):
+def get_smart_response(user_prompt, chat_history):
     """
-    FALLBACK LOGIC:
-    1. Try Groq (Llama 3.1) - fast & free.
-    2. If Groq fails, try Google Gemini loop.
+    Decides which AI to use (OpenAI -> Groq -> Gemini) 
+    and sends the FULL history + Rules.
     """
-    errors = [] # Keep track of what went wrong
     
-    # 1. TRY GROQ (Using OpenAI Client)
+    # PREPARE MESSAGES FOR OPENAI/GROQ
+    # Structure: [System Rules] + [Previous Chat] + [New User Message]
+    messages_payload = [{"role": "system", "content": SYSTEM_RULES}]
+    
+    # Add history from session state
+    for msg in chat_history:
+        messages_payload.append({"role": msg["role"], "content": msg["content"]})
+    
+    # Add the latest user prompt
+    messages_payload.append({"role": "user", "content": user_prompt})
+
+    # 1. TRY OPENAI (If key exists)
+    if openai_key:
+        try:
+            client = openai.OpenAI(api_key=openai_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo", 
+                messages=messages_payload
+            )
+            return response.choices[0].message.content, "OpenAI"
+        except Exception:
+            pass # Fail silently to backup
+
+    # 2. TRY GROQ (The Best Free Backup)
     if groq_key:
         try:
             client = openai.OpenAI(
@@ -54,65 +77,63 @@ def get_backup_response(prompt):
                 api_key=groq_key
             )
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",  # <--- UPDATED MODEL NAME
-                messages=[{"role": "user", "content": prompt}]
+                model="llama-3.1-8b-instant", 
+                messages=messages_payload
             )
-            return f"⚡ [Groq Llama 3.1]: {response.choices[0].message.content}"
+            return response.choices[0].message.content, "Groq (Llama 3.1)"
         except Exception as e:
-            # THIS IS THE CRITICAL CHANGE: We save the error to show you later
-            error_msg = f"Groq Error: {str(e)}"
-            print(error_msg)
-            errors.append(error_msg)
-    else:
-        errors.append("Groq Error: No API Key found in secrets.")
-    
-    # 2. IF GROQ FAILS, TRY GEMINI
-    if not gemini_key:
-        errors.append("Gemini Error: No API Key found.")
-        return f"❌ Configuration Error: {errors}"
+            print(f"Groq Error: {e}")
 
-    for model_name in GEMINI_ROSTER:
+    # 3. TRY GEMINI (Last Resort)
+    # Gemini behaves differently, so we convert history to a string script.
+    if gemini_key:
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return f"✨ [Gemini {model_name}]: {response.text}"
+            # Convert list of messages to a single string for Gemini
+            full_transcript = f"{SYSTEM_RULES}\n\n"
+            for msg in messages_payload:
+                if msg['role'] != 'system':
+                    full_transcript += f"{msg['role'].upper()}: {msg['content']}\n"
             
-        except exceptions.ResourceExhausted:
-            print(f"⚠️ Quota hit for {model_name}. Switching...")
-            continue
+            # Using the safest model
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(full_transcript)
+            return response.text, "Gemini"
         except Exception as e:
-            errors.append(f"Gemini {model_name}: {str(e)}")
-            continue
+            return f"❌ Error: {e}", "Error"
 
-    # 3. IF EVERYTHING FAILS, SHOW THE LOGS
-    return f"❌ ALL SYSTEMS FAILED.\n\n**Debug Logs:**\n" + "\n".join(errors)
+    return "❌ No API keys found. Please check secrets.", "Error"
 
-# --- APP LOGIC ---
+# --- CHAT INTERFACE ---
 
-user_input = st.text_input("Ask me anything:")
+# 1. Display previous chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if st.button("Submit") and user_input:
-    response_text = ""
+# 2. Chat Input Box
+if prompt := st.chat_input("Type your answer here..."):
+    # Show user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
     
-    # 1. TRY OPENAI FIRST
-    try:
-        with st.spinner("Trying OpenAI..."):
-            response_text = get_openai_response(user_input)
-            st.success("✅ Used Model: **OpenAI (GPT-3.5)**")
-            st.write(response_text)
-            
-    except Exception as e_openai:
-        # 2. FALLBACK TO GROQ -> GEMINI
-        try:
-            with st.spinner("OpenAI failed. Trying backups (Groq/Gemini)..."):
-                response_text = get_backup_response(user_input)
-                
-                if "❌" in response_text:
-                    st.error(response_text) # This will now show the REAL error
-                else:
-                    st.warning(f"⚠️ Backup Successful")
-                    st.write(response_text)
-                
-        except Exception as e_backup:
-            st.error("Critical Failure.")
-            st.write(e_backup)
+    # Add to specific history logic (We don't add to session_state yet, 
+    # we pass the *existing* state + new prompt to the AI)
+    
+    with st.spinner("Thinking..."):
+        # Call the AI function
+        response_text, provider = get_smart_response(prompt, st.session_state.messages)
+        
+        # Display Bot Response
+        with st.chat_message("assistant"):
+            if provider != "OpenAI":
+                st.caption(f"⚡ using {provider}") # Show which free model helped
+            st.markdown(response_text)
+    
+    # 3. Save to History (So it remembers for next time)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.messages.append({"role": "assistant", "content": response_text})
+
+# Button to clear memory if testing
+if st.sidebar.button("Reset Conversation"):
+    st.session_state.messages = []
+    st.rerun()
