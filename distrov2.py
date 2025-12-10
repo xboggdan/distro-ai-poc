@@ -1,163 +1,79 @@
 import streamlit as st
-import time
-import openai 
+import openai
+import google.generativeai as genai
+import os
 
-# --- CONFIGURATION & SECRETS ---
-st.set_page_config(page_title="BandLab Distribution Assistant", page_icon="🚀", layout="wide")
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Fallback AI Chat")
+st.title("Dual-Model Chat App")
 
-# Try to load API key from secrets
-try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-    has_api_key = True
-except:
-    has_api_key = False
+# --- CONFIGURE APIS ---
+# Try to get keys from Streamlit Secrets
+openai_key = st.secrets.get("OPENAI_API_KEY")
+gemini_key = st.secrets.get("GEMINI_API_KEY")
 
-# --- CUSTOM CSS ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #f8f9fa; }
-    h1, h2, h3 { color: #d13239; font-family: 'Helvetica Neue', sans-serif; }
-    .stChatMessage { background-color: white; border-radius: 10px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .success-box { padding: 20px; background-color: #d4edda; color: #155724; border-radius: 10px; border: 1px solid #c3e6cb; }
-    </style>
-    """, unsafe_allow_html=True)
+# Configure Gemini if key exists
+if gemini_key:
+    genai.configure(api_key=gemini_key)
 
-# --- SESSION STATE INITIALIZATION ---
-if "step" not in st.session_state: st.session_state.step = 1
-if "release_data" not in st.session_state:
-    st.session_state.release_data = {"title": "New Single", "file": None, "genre": "", "cover": None}
-if "main_chat" not in st.session_state:
-    st.session_state.main_chat = [{"role": "assistant", "content": "Let's get your **Single** ready. \n\n**Step 1:** Please upload your Audio File."}]
-if "kb_chat" not in st.session_state:
-    st.session_state.kb_chat = [] # Separate history for Knowledge Base
+# --- HELPER FUNCTIONS ---
 
-# --- SIDEBAR: ACTIVE KNOWLEDGE BASE ---
-with st.sidebar:
-    st.header("🧠 Knowledge Base")
+def get_openai_response(prompt):
+    """Attempts to get a response from OpenAI."""
+    if not openai_key:
+        raise ValueError("OpenAI API Key not found.")
     
-    if not has_api_key:
-        st.error("⚠️ OpenAI Key missing in Secrets!")
-    else:
-        # Display KB Chat History
-        for msg in st.session_state.kb_chat:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+    client = openai.OpenAI(api_key=openai_key)
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo", # or gpt-4
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+def get_gemini_response(prompt):
+    """Attempts to get a response from Google Gemini."""
+    if not gemini_key:
+        raise ValueError("Gemini API Key not found.")
+    
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content(prompt)
+    return response.text
+
+# --- APP LOGIC ---
+
+user_input = st.text_input("Ask me anything:")
+
+if st.button("Submit") and user_input:
+    response_text = ""
+    used_model = ""
+    
+    # 1. TRY OPENAI FIRST
+    try:
+        with st.spinner("Trying OpenAI..."):
+            response_text = get_openai_response(user_input)
+            used_model = "OpenAI (GPT-3.5)"
+            status_color = "green" # Success color
+            
+    except Exception as e_openai:
+        # OpenAI failed, print error to console (optional) and try fallback
+        print(f"OpenAI failed: {e_openai}")
         
-        # KB Input
-        kb_question = st.text_input("Ask a question about distribution:", key="kb_input")
-        if st.button("Ask Guide"):
-            if kb_question:
-                # 1. User Message
-                st.session_state.kb_chat.append({"role": "user", "content": kb_question})
+        # 2. FALLBACK TO GEMINI
+        try:
+            with st.spinner("OpenAI failed. Switching to Google Gemini..."):
+                response_text = get_gemini_response(user_input)
+                used_model = "Google Gemini (Fallback)"
+                status_color = "orange" # Warning color to indicate fallback
                 
-                # 2. AI Response
-                with st.spinner("Thinking..."):
-                    try:
-                        response = openai.ChatCompletion.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "You are a music distribution expert for BandLab. Keep answers short and helpful."},
-                                {"role": "user", "content": kb_question}
-                            ]
-                        )
-                        answer = response.choices[0].message.content
-                    except Exception as e:
-                        answer = f"Error: {str(e)}"
+        except Exception as e_gemini:
+            st.error(f"Both models failed. Please check your API keys/credits.\n\nError details: {e_gemini}")
 
-                # 3. Save Response
-                st.session_state.kb_chat.append({"role": "assistant", "content": answer})
-                st.rerun()
-
-# --- MAIN APP ---
-st.title("🚀 BandLab Distribution Assistant")
-st.markdown("---")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("📝 Release Wizard")
-
-    # Render Main Chat
-    for msg in st.session_state.main_chat:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # --- STEP 1: UPLOAD AUDIO ---
-    if st.session_state.step == 1:
-        uploaded_file = st.file_uploader("Select Audio File", type=['wav', 'mp3'], key="audio")
-        if uploaded_file:
-            st.session_state.release_data["file"] = uploaded_file.name
-            st.session_state.main_chat.append({"role": "user", "content": f"Uploaded: **{uploaded_file.name}**"})
-            st.session_state.main_chat.append({"role": "assistant", "content": "Audio valid! ✅ \n\n**Step 2:** What is the **Title**?"})
-            st.session_state.step = 2
-            st.rerun()
-
-    # --- STEP 2: METADATA ---
-    if st.session_state.step == 2:
-        with st.form("meta_form"):
-            title = st.text_input("Track Title", value=st.session_state.release_data["title"])
-            genre = st.selectbox("Genre", ["Pop", "Hip-Hop", "Rock", "Electronic", "R&B"])
-            if st.form_submit_button("Next ➡"):
-                st.session_state.release_data.update({"title": title, "genre": genre})
-                st.session_state.main_chat.append({"role": "user", "content": f"{title} ({genre})"})
-                st.session_state.main_chat.append({"role": "assistant", "content": "Nice title. \n\n**Step 3:** Upload **Cover Art**."})
-                st.session_state.step = 3
-                st.rerun()
-
-    # --- STEP 3: COVER ART ---
-    if st.session_state.step == 3:
-        cover_file = st.file_uploader("Upload Art (JPG/PNG)", type=['jpg', 'png'], key="cover")
-        if cover_file:
-            st.session_state.release_data["cover"] = cover_file
-            st.session_state.main_chat.append({"role": "user", "content": "Cover art uploaded."})
-            st.session_state.main_chat.append({"role": "assistant", "content": "Artwork looks great! \n\n**Step 4:** Review and Distribute."})
-            st.session_state.step = 4
-            st.rerun()
-
-    # --- STEP 4: REVIEW & SUBMIT ---
-    if st.session_state.step == 4:
-        st.info("Please review your release details before submission.")
-        
-        # Summary Table
-        st.table({
-            "Track Title": [st.session_state.release_data["title"]],
-            "Genre": [st.session_state.release_data["genre"]],
-            "Audio File": [st.session_state.release_data["file"]],
-            "Cover Art": ["Uploaded ✅"]
-        })
-
-        if st.button("🚀 Distribute to Spotify & Apple Music", type="primary"):
-            with st.spinner("Uploading to servers..."):
-                time.sleep(2) # Fake API call
-                st.session_state.step = 5
-                st.rerun()
-
-    # --- STEP 5: SUCCESS ---
-    if st.session_state.step == 5:
-        st.markdown("""
-        <div class="success-box">
-            <h3>🎉 Release Submitted!</h3>
-            <p>Your track <b>%s</b> has been sent to stores.</p>
-            <p>You will receive an email when it goes live (usually 24-48 hours).</p>
-        </div>
-        """ % st.session_state.release_data["title"], unsafe_allow_html=True)
-        
-        if st.button("Start New Release"):
-            for key in st.session_state.keys():
-                del st.session_state[key]
-            st.rerun()
-
-# --- RIGHT COLUMN: PREVIEW ---
-with col2:
-    st.subheader("👀 Preview")
-    c = st.container(border=True)
-    
-    # Dynamic Cover Art
-    if st.session_state.release_data["cover"]:
-        c.image(st.session_state.release_data["cover"], use_container_width=True)
-    else:
-        c.image("https://placehold.co/400x400?text=Cover+Art", use_container_width=True)
-        
-    c.markdown(f"### {st.session_state.release_data['title']}")
-    if st.session_state.release_data["genre"]:
-        c.caption(st.session_state.release_data["genre"])
+    # --- DISPLAY RESULTS ---
+    if response_text:
+        # Show the User which model was used
+        if "Fallback" in used_model:
+            st.warning(f"⚠️ Used Model: **{used_model}**")
+        else:
+            st.success(f"✅ Used Model: **{used_model}**")
+            
+        st.write(response_text)
