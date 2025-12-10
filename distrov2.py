@@ -33,8 +33,9 @@ def get_openai_response(prompt):
     return response.choices[0].message.content
 
 # List of models to try in order (Newest/Fastest -> Older/Slower)
+# I removed 'gemini-2.5-flash' completely since it has no quota left.
 MODEL_ROSTER = [
-    "gemini-2.0-flash-exp",   # Try this first
+    "gemini-2.0-flash-exp",   # Try this first (Experimental, usually good limits)
     "gemini-1.5-flash",       # Standard fallback
     "gemini-1.5-flash-8b",    # Lightweight fallback
     "gemini-1.5-pro"          # Final resort
@@ -43,9 +44,8 @@ MODEL_ROSTER = [
 def get_gemini_response(prompt):
     """Attempts to get a response from Google Gemini with fallback."""
     
-    # 1. Check if the key was actually loaded earlier
-    # (Since you define gemini_key at line 13, we can check if it exists)
-    if not st.secrets.get("GEMINI_API_KEY"):
+    # 1. Check if the key was actually loaded
+    if not gemini_key:
         return "Error: GEMINI_API_KEY not found in secrets."
 
     # 2. Cycle through the models
@@ -71,17 +71,6 @@ def get_gemini_response(prompt):
     # 3. If the loop finishes without returning, all models failed
     return "❌ Error: Daily quota exceeded for ALL free models. Please try again tomorrow."
 
-def get_gemini_response(prompt):
-    """Attempts to get a response from Google Gemini."""
-    if not gemini_key:
-        raise ValueError("Gemini API Key not found.")
-    
-    # UPDATED MODEL NAME HERE based on your diagnostic
-    # We strip 'models/' and use just the name
-    model = genai.GenerativeModel('gemini-2.5-flash') 
-    response = model.generate_content(prompt)
-    return response.text
-
 # --- APP LOGIC ---
 
 user_input = st.text_input("Ask me anything:")
@@ -89,14 +78,15 @@ user_input = st.text_input("Ask me anything:")
 if st.button("Submit") and user_input:
     response_text = ""
     used_model = ""
-    status_color = ""
     
     # 1. TRY OPENAI FIRST
     try:
         with st.spinner("Trying OpenAI..."):
             response_text = get_openai_response(user_input)
             used_model = "OpenAI (GPT-3.5)"
-            status_color = "green"
+            
+            st.success(f"✅ Used Model: **{used_model}**")
+            st.write(response_text)
             
     except Exception as e_openai:
         print(f"OpenAI failed: {e_openai}")
@@ -105,21 +95,16 @@ if st.button("Submit") and user_input:
         try:
             with st.spinner("OpenAI failed. Switching to Google Gemini..."):
                 response_text = get_gemini_response(user_input)
-                used_model = "Google Gemini 2.5 Flash (Fallback)"
-                status_color = "orange"
+                used_model = "Google Gemini (Fallback)"
+                
+                # Check if the response was actually an error message
+                if "Error:" in response_text:
+                     st.error(response_text)
+                else:
+                     st.warning(f"⚠️ Used Model: **{used_model}**")
+                     st.write(response_text)
                 
         except Exception as e_gemini:
             st.error("Both models failed.")
             st.error(f"OpenAI Error: {e_openai}")
             st.error(f"Gemini Error: {e_gemini}")
-
-    # --- DISPLAY RESULTS ---
-    if response_text:
-        if "Fallback" in used_model:
-            st.warning(f"⚠️ Used Model: **{used_model}**")
-        else:
-            st.success(f"✅ Used Model: **{used_model}**")
-            
-        st.write(response_text)
-
-
