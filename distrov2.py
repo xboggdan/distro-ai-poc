@@ -54,7 +54,7 @@ def get_backup_response(prompt):
                 api_key=groq_key
             )
             response = client.chat.completions.create(
-                model="llama3-8b-8192",  # Free, fast model
+                model="llama-3.1-8b-instant",  # Free, fast model
                 messages=[{"role": "user", "content": prompt}]
             )
             return f"⚡ [Groq Llama3]: {response.choices[0].message.content}"
@@ -112,3 +112,4 @@ if st.button("Submit") and user_input:
         except Exception as e_backup:
             st.error("Critical Failure: All AI models failed.")
             st.error(f"Details: {e_backup}")
+
