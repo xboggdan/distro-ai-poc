@@ -2,6 +2,7 @@ import streamlit as st
 import openai
 import google.generativeai as genai
 import os
+from google.api_core import exceptions
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Fallback AI Chat")
@@ -30,6 +31,45 @@ def get_openai_response(prompt):
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
+
+# List of models to try in order (Newest/Fastest -> Older/Slower)
+MODEL_ROSTER = [
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro"
+]
+
+def get_gemini_response(prompt):
+    """Attempts to get a response from Google Gemini with fallback."""
+    
+    # 1. Check if the key was actually loaded earlier
+    # (Since you define gemini_key at line 13, we can check if it exists)
+    if not st.secrets.get("GEMINI_API_KEY"):
+        return "Error: GEMINI_API_KEY not found in secrets."
+
+    # 2. Cycle through the models
+    for model_name in MODEL_ROSTER:
+        try:
+            # Create the model instance
+            model = genai.GenerativeModel(model_name)
+            
+            # Generate content
+            response = model.generate_content(prompt)
+            return response.text
+
+        except exceptions.ResourceExhausted:
+            # This is the 429 error. We catch it and loop to the next model.
+            print(f"⚠️ Quota hit for {model_name}. Switching to next model...")
+            continue
+            
+        except Exception as e:
+            # Catch other random errors (like invalid model names)
+            print(f"Error with {model_name}: {e}")
+            continue
+
+    # 3. If the loop finishes without returning, all models failed
+    return "❌ Error: Daily quota exceeded for ALL free models. Please try again tomorrow."
 
 def get_gemini_response(prompt):
     """Attempts to get a response from Google Gemini."""
@@ -81,3 +121,4 @@ if st.button("Submit") and user_input:
             st.success(f"✅ Used Model: **{used_model}**")
             
         st.write(response_text)
+
