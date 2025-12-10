@@ -9,22 +9,20 @@ st.set_page_config(page_title="Fallback AI Chat")
 st.title("Dual-Model Chat App")
 
 # --- CONFIGURE APIS ---
-# Try to get keys from Streamlit Secrets
 openai_key = st.secrets.get("OPENAI_API_KEY")
 gemini_key = st.secrets.get("GEMINI_API_KEY")
+groq_key = st.secrets.get("GROQ_API_KEY")  # <--- NEW KEY FROM SECRETS
 
-# Configure Gemini if key exists
 if gemini_key:
     genai.configure(api_key=gemini_key)
 
 # --- HELPER FUNCTIONS ---
 
 def get_openai_response(prompt):
-    """Attempts to get a response from OpenAI."""
+    """Attempts to get a response from OpenAI (Paid)."""
     if not openai_key:
         raise ValueError("OpenAI API Key not found.")
     
-    # Using the standard GPT-3.5 or 4 model
     client = openai.OpenAI(api_key=openai_key)
     response = client.chat.completions.create(
         model="gpt-3.5-turbo", 
@@ -32,44 +30,55 @@ def get_openai_response(prompt):
     )
     return response.choices[0].message.content
 
-# List of models to try in order (Newest/Fastest -> Older/Slower)
-# I removed 'gemini-2.5-flash' completely since it has no quota left.
-MODEL_ROSTER = [
-    "gemini-2.0-flash-exp",   # Try this first (Experimental, usually good limits)
-    "gemini-1.5-flash",       # Standard fallback
-    "gemini-1.5-flash-8b",    # Lightweight fallback
-    "gemini-1.5-pro"          # Final resort
+# Gemini Model Roster (Filtered to valid ones)
+GEMINI_ROSTER = [
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro"
 ]
 
-def get_gemini_response(prompt):
-    """Attempts to get a response from Google Gemini with fallback."""
+def get_backup_response(prompt):
+    """
+    FALLBACK LOGIC:
+    1. Try Groq (Llama 3) - fast & free.
+    2. If Groq fails, try Google Gemini loop.
+    """
     
-    # 1. Check if the key was actually loaded
-    if not gemini_key:
-        return "Error: GEMINI_API_KEY not found in secrets."
-
-    # 2. Cycle through the models
-    for model_name in MODEL_ROSTER:
+    # 1. TRY GROQ (Using OpenAI Client)
+    if groq_key:
         try:
-            # Create the model instance
-            model = genai.GenerativeModel(model_name)
-            
-            # Generate content
-            response = model.generate_content(prompt)
-            return response.text
-
-        except exceptions.ResourceExhausted:
-            # This is the 429 error. We catch it and loop to the next model.
-            print(f"⚠️ Quota hit for {model_name}. Switching to next model...")
-            continue
-            
+            # Groq is compatible with OpenAI's library!
+            client = openai.OpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=groq_key
+            )
+            response = client.chat.completions.create(
+                model="llama3-8b-8192",  # Free, fast model
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return f"⚡ [Groq Llama3]: {response.choices[0].message.content}"
         except Exception as e:
-            # Catch other random errors (like invalid model names)
+            print(f"Groq failed: {e}")
+    
+    # 2. IF GROQ FAILS, TRY GEMINI
+    if not gemini_key:
+        return "❌ Error: No Groq or Gemini keys found."
+
+    for model_name in GEMINI_ROSTER:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return f"✨ [Gemini {model_name}]: {response.text}"
+            
+        except exceptions.ResourceExhausted:
+            print(f"⚠️ Quota hit for {model_name}. Switching...")
+            continue
+        except Exception as e:
             print(f"Error with {model_name}: {e}")
             continue
 
-    # 3. If the loop finishes without returning, all models failed
-    return "❌ Error: Daily quota exceeded for ALL free models. Please try again tomorrow."
+    return "❌ All systems down: OpenAI, Groq, and Gemini quotas exceeded."
 
 # --- APP LOGIC ---
 
@@ -83,28 +92,23 @@ if st.button("Submit") and user_input:
     try:
         with st.spinner("Trying OpenAI..."):
             response_text = get_openai_response(user_input)
-            used_model = "OpenAI (GPT-3.5)"
-            
-            st.success(f"✅ Used Model: **{used_model}**")
+            st.success("✅ Used Model: **OpenAI (GPT-3.5)**")
             st.write(response_text)
             
     except Exception as e_openai:
         print(f"OpenAI failed: {e_openai}")
         
-        # 2. FALLBACK TO GEMINI
+        # 2. FALLBACK TO GROQ -> GEMINI
         try:
-            with st.spinner("OpenAI failed. Switching to Google Gemini..."):
-                response_text = get_gemini_response(user_input)
-                used_model = "Google Gemini (Fallback)"
+            with st.spinner("OpenAI failed. Trying backups (Groq/Gemini)..."):
+                response_text = get_backup_response(user_input)
                 
-                # Check if the response was actually an error message
-                if "Error:" in response_text:
-                     st.error(response_text)
+                if "Error" in response_text or "All systems down" in response_text:
+                    st.error(response_text)
                 else:
-                     st.warning(f"⚠️ Used Model: **{used_model}**")
-                     st.write(response_text)
+                    st.warning(f"⚠️ Backup Successful")
+                    st.write(response_text)
                 
-        except Exception as e_gemini:
-            st.error("Both models failed.")
-            st.error(f"OpenAI Error: {e_openai}")
-            st.error(f"Gemini Error: {e_gemini}")
+        except Exception as e_backup:
+            st.error("Critical Failure: All AI models failed.")
+            st.error(f"Details: {e_backup}")
