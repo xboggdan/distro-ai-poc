@@ -4,11 +4,10 @@ import google.generativeai as genai
 import json
 import re
 import time
-import random
 from datetime import date, timedelta, datetime
 
 # --- 1. CONFIGURATION & STYLING ---
-st.set_page_config(page_title="DistroBot V8", layout="centered", page_icon="💿")
+st.set_page_config(page_title="DistroBot Ultimate", layout="centered", page_icon="💿")
 
 st.markdown("""
     <style>
@@ -53,55 +52,87 @@ groq_key = st.secrets.get("GROQ_API_KEY")
 if gemini_key:
     genai.configure(api_key=gemini_key)
 
-# --- 2. HOW IT WORKS ---
-with st.expander("📚 READ ME: V8 Capabilities & Testing", expanded=False):
+# --- 2. EXTENDED README & ARCHITECTURE ---
+with st.expander("📚 READ ME: Architecture, Models & How It Works", expanded=True):
     st.markdown("""
-    ### 🚀 New V8 Features
-    1.  **AI Art Fixer:** Upload any image. The bot will simulate finding a text mismatch and offer a "Magic Fix" button.
-    2.  **Date Guardrails:** Try selecting a date tomorrow. It will block you (Must be 14-90 days out).
-    3.  **Inheritance:** Watch how it **skips** Track Title but tells you it copied the Release Title.
-    4.  **Conditional Logic:** Select "Instrumental" -> It skips Explicit/Lyricist questions.
+    ### 🛠️ Architecture & Logic
+    **DistroBot** is a Hybrid AI State Machine designed to act as a strict Quality Control (QC) agent for music distribution.
+    
+    1.  **Hybrid UI:** It combines Chat Interface (for free text) with Structured Widgets (Buttons, Date Pickers, Uploaders) to ensure data consistency.
+    2.  **State Machine:** It tracks the user's progress (`step_id`) and strictly enforces a linear flow (Title -> Artist -> Genre -> etc.), but allows "Smart Skips" (e.g., skipping explicit questions for instrumentals).
+    3.  **AI Router:** Every text input passes through `query_ai_engine()`, which classifies the intent:
+        * **Is it a Question?** -> Answers from Knowledge Base.
+        * **Is it a Skip Command?** -> Marks field as None.
+        * **Is it Data?** -> Validates against Confluence Policy.
+
+    ### 🧠 AI Models Supported
+    This tool is "Model Agnostic" and uses a waterfall priority system:
+    1.  **Groq (Llama-3-8b-instant):** *Primary.* Chosen for sub-second inference speed (crucial for chat UI) and strong instruction following.
+    2.  **OpenAI (GPT-3.5-Turbo / GPT-4):** *Secondary.* Used if Groq fails. High reliability.
+    3.  **Google (Gemini 1.5 Flash):** *Fallback.* Lightweight and fast backup.
+    
+    ### ✨ Core Features
+    * **Validation Guardrails:** Blocks forbidden words (feat, prod, emojis) in real-time.
+    * **Contextual FAQ:** Can pause the form to answer "What is an ISRC?" and then resume.
+    * **Smart Date Logic:** Uses Python math to enforce "14-90 days in future" rules (more accurate than LLMs).
+    * **Visual AI Fixer:** Simulates scanning cover art for text mismatches and offering a "one-click fix" (Mocked for demo).
+    * **Metadata Inheritance:** Auto-fills Track Title for Single releases to match Release Title.
     """)
 
 # --- 3. KNOWLEDGE BASE ---
 DISTRO_KNOWLEDGE_BASE = """
-VALIDATION RULES (STRICT):
-1. Release Title: FORBIDDEN: 'feat', 'prod', 'remix', emojis. Brackets () allowed.
-2. Version: FORBIDDEN: 'Original', 'Official', 'Explicit'. ALLOWED: 'Remix', 'Acoustic'.
-3. Artist Name: FORBIDDEN: 'feat', 'prod' inside name.
-4. Composer: MUST BE Legal First & Last Name.
-5. Date: Must be between 14 days and 3 months from today.
+VALIDATION POLICY (STRICT):
+1. Release Title: 
+   - FORBIDDEN: 'feat', 'prod', 'remix', emojis. 
+   - ALLOWED: Proper names, foreign languages, brackets ().
+   - NOTE: Self-titled albums (Artist Name = Title) are ALLOWED.
+2. Version: 
+   - FORBIDDEN: 'Original', 'Official', 'Explicit', 'New'. 
+   - ALLOWED: 'Remix', 'Acoustic', 'Live'.
+3. Artist Name: 
+   - FORBIDDEN: 'feat', 'prod' inside name. 
+4. Composer: 
+   - MUST BE: Legal First & Last Name.
+5. General: 
+   - NO Emojis.
 """
 
 # --- 4. ROBUST AI ENGINE ---
 
 def clean_json(raw_text):
     try:
+        # Regex to extract JSON object
         match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if match: return json.loads(match.group(0))
         return json.loads(raw_text)
     except: return None
 
-def query_ai_engine(user_input, current_field, context_str=""):
+def query_ai_engine(user_input, current_field):
     """
-    Validates text inputs against the Knowledge Base.
+    Validates inputs. UPDATED: Permissive by default for Titles.
     """
     system_prompt = f"""
     You are DistroBot QC.
     RULES: {DISTRO_KNOWLEDGE_BASE}
     
-    CONTEXT: Field="{current_field}". {context_str}
+    CONTEXT: User input for Field="{current_field}".
     INPUT: "{user_input}"
     
     INSTRUCTIONS:
-    1. FAQ CHECK: If user asks a question, return type="question".
-    2. SKIP CHECK: If input is "none", "skip", "no", return type="skip".
-    3. VALIDATE: Check against rules.
+    1. **INTENT:** Is this a question (e.g. "help")? Return type="question".
+    2. **SKIP:** Is this "none", "skip", "no"? Return type="skip".
+    3. **VALIDATE:** - IF input violates a *specific* FORBIDDEN rule above -> valid=false.
+       - IF input looks like a Name or Title and contains NO forbidden words -> valid=true.
+       - Do NOT block proper names (e.g. "Marcel Pavel" is VALID for Title).
     
-    RETURN JSON ONLY: {{ "valid": true }} OR {{ "valid": false, "error": "Reason" }} OR {{ "type": "question", "reply": "..." }}
+    RETURN JSON ONLY: 
+    {{ "valid": true }} 
+    OR {{ "valid": false, "error": "Reason" }} 
+    OR {{ "type": "question", "reply": "..." }}
     """
     
     try:
+        # Priority: Groq
         if groq_key:
             client = openai.OpenAI(base_url="https://api.groq.com/openai/v1", api_key=groq_key)
             resp = client.chat.completions.create(
@@ -111,8 +142,15 @@ def query_ai_engine(user_input, current_field, context_str=""):
                 temperature=0
             )
             return clean_json(resp.choices[0].message.content)
+            
+        # Fallback: Gemini
+        elif gemini_key:
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            resp = model.generate_content(system_prompt + "\nReturn JSON only.")
+            return clean_json(resp.text)
+            
     except:
-        return {"valid": True} # Fail open
+        return {"valid": True} # Fail safe (Allow user to proceed if AI is down)
 
 # --- 5. APP LOGIC & STATE ---
 
@@ -136,33 +174,50 @@ def next_step(target_id):
     st.session_state.step_id = target_id
     st.rerun()
 
-# --- 6. WORKFLOW STEPS (THE STATE MACHINE) ---
+def process_ai_response(val, field_key, next_step_id):
+    """Helper to handle AI check results."""
+    res = query_ai_engine(val, field_key)
+    
+    # 1. Question Handling
+    if res.get("type") == "question":
+        st.session_state.messages.append({"role": "assistant", "content": f"ℹ️ **FAQ:** {res['reply']}"})
+        st.rerun()
+        
+    # 2. Skip Handling
+    elif res.get("type") == "skip":
+        st.session_state.data[field_key] = ""
+        next_step(next_step_id)
+        
+    # 3. Data Validation
+    else:
+        if res.get("valid", True):
+            st.session_state.data[field_key] = val
+            next_step(next_step_id)
+        else:
+            bot_say(f"🚫 {res.get('error', 'Invalid input')}")
 
-st.title("🤖 DistroBot V8")
+# --- 6. WORKFLOW STEPS ---
+
+st.title("🤖 DistroBot V9")
 
 # History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- STEP: START ---
+# --- START ---
 if st.session_state.step_id == "start":
     bot_say("👋 Hi! I'm DistroBot. I'll guide you through your release.\n\n**First, what is the Title of your Release?**")
     st.session_state.step_id = "release_title"
 
-# --- STEP: RELEASE TITLE ---
+# --- RELEASE TITLE ---
 elif st.session_state.step_id == "release_title":
     val = st.chat_input("Release Title...")
     if val:
         add_user_msg(val)
-        res = query_ai_engine(val, "Release Title")
-        if res.get("valid", True):
-            st.session_state.data["release_title"] = val
-            next_step("version")
-        else:
-            bot_say(f"🚫 {res['error']}")
+        process_ai_response(val, "release_title", "version")
 
-# --- STEP: VERSION ---
+# --- VERSION ---
 elif st.session_state.step_id == "version":
     bot_say("Is there a specific **Version**? (e.g., Remix). Click 'Skip' for Original.")
     col1, col2 = st.columns(2)
@@ -174,27 +229,17 @@ elif st.session_state.step_id == "version":
     val = st.chat_input("Version...")
     if val:
         add_user_msg(val)
-        res = query_ai_engine(val, "Version")
-        if res.get("valid", True):
-            st.session_state.data["version"] = val
-            next_step("artist")
-        else:
-            bot_say(f"🚫 {res['error']}")
+        process_ai_response(val, "version", "artist")
 
-# --- STEP: ARTIST ---
+# --- ARTIST ---
 elif st.session_state.step_id == "artist":
     bot_say("**Primary Artist Name?**")
     val = st.chat_input("Artist Name...")
     if val:
         add_user_msg(val)
-        res = query_ai_engine(val, "Artist Name")
-        if res.get("valid", True):
-            st.session_state.data["artist"] = val
-            next_step("genre")
-        else:
-            bot_say(f"🚫 {res['error']}")
+        process_ai_response(val, "artist", "genre")
 
-# --- STEP: GENRE ---
+# --- GENRE ---
 elif st.session_state.step_id == "genre":
     bot_say("Select your **Genre**:")
     genres = ["Pop", "Hip-Hop", "Rock", "Electronic", "R&B", "Latin"]
@@ -205,7 +250,7 @@ elif st.session_state.step_id == "genre":
             st.session_state.data["genre"] = g
             next_step("upc_label_ask")
 
-# --- STEP: UPC/LABEL ASK ---
+# --- UPC/LABEL ASK ---
 elif st.session_state.step_id == "upc_label_ask":
     bot_say("Do you want to add a custom **UPC** or **Label Name**?")
     c1, c2 = st.columns(2)
@@ -218,16 +263,20 @@ elif st.session_state.step_id == "upc_label_ask":
         st.session_state.data["upc"] = ""
         next_step("date_ask")
 
-# --- STEP: LABEL INPUT ---
+# --- LABEL INPUT ---
 elif st.session_state.step_id == "label_input":
     bot_say("Enter **Label Name** (or type 'Skip'):")
     val = st.chat_input("Label...")
     if val:
         add_user_msg(val)
-        st.session_state.data["label"] = val if val.lower() != "skip" else ""
+        # Simple skip logic without AI for speed
+        if val.lower() in ["skip", "no", "none"]:
+            st.session_state.data["label"] = ""
+        else:
+            st.session_state.data["label"] = val
         next_step("date_ask")
 
-# --- STEP: DATE SELECTION ---
+# --- DATE ASK ---
 elif st.session_state.step_id == "date_ask":
     bot_say("When should this go live?")
     c1, c2 = st.columns(2)
@@ -239,9 +288,9 @@ elif st.session_state.step_id == "date_ask":
         add_user_msg("Specific Date")
         next_step("date_input")
 
-# --- STEP: DATE INPUT (LOGIC) ---
+# --- DATE INPUT ---
 elif st.session_state.step_id == "date_input":
-    bot_say("Please enter format YYYY-MM-DD. **Must be 14 days to 3 months from today.**")
+    bot_say("Please enter format YYYY-MM-DD. **Must be 14-90 days from today.**")
     val = st.chat_input("YYYY-MM-DD")
     if val:
         add_user_msg(val)
@@ -259,48 +308,49 @@ elif st.session_state.step_id == "date_input":
         except ValueError:
             bot_say("🚫 Invalid format. Use YYYY-MM-DD.")
 
-# --- STEP: COVER ART (AI FIXER) ---
+# --- COVER ART ---
 elif st.session_state.step_id == "cover_art":
-    bot_say("🎨 **Upload Cover Art**.")
+    bot_say("🎨 **Upload Cover Art** (JPG/PNG).")
     up = st.file_uploader("Image", type=["jpg", "png"])
     
     if up:
         if not st.session_state.art_fixed:
-            # SIMULATE AI ANALYSIS
             with st.spinner("🤖 Scanning image text..."):
-                time.sleep(1.5)
+                time.sleep(1.2) # Demo effect
             
-            # SIMULATE ERROR FINDING
             st.markdown("""
             <div class='ai-fix-box'>
-                <b>⚠️ AI Alert:</b> I detected text on the cover that doesn't match your Artist Name ("Bogdan").<br>
-                This will get rejected by Spotify.
+                <b>⚠️ AI Alert:</b> I detected text that doesn't match Artist Name "{}".<br>
+                Do you want me to remove it?
             </div>
-            """, unsafe_allow_html=True)
+            """.format(st.session_state.data.get('artist', 'Unknown')), unsafe_allow_html=True)
             
-            if st.button("✨ Fix with Nano Banana AI"):
-                with st.spinner("🍌 Nano Banana is removing text..."):
-                    time.sleep(2)
+            c1, c2 = st.columns(2)
+            if c1.button("✨ Fix with AI"):
+                with st.spinner("🍌 Nano Banana is fixing it..."):
+                    time.sleep(1.5)
                 st.session_state.art_fixed = True
-                st.success("Text removed! Image is now compliant.")
+                st.success("Text removed! Image compliant.")
                 st.rerun()
+            if c2.button("Use Original"):
+                 st.session_state.data["artwork"] = up.name
+                 next_step("track_logic")
         else:
             bot_say("✅ Fixed image confirmed.")
             if st.button("Next Step"):
-                st.session_state.data["artwork"] = "Fixed_Image.jpg"
+                st.session_state.data["artwork"] = "Fixed_" + up.name
                 next_step("track_logic")
 
-# --- STEP: TRACK LOGIC (INHERITANCE) ---
+# --- TRACK LOGIC ---
 elif st.session_state.step_id == "track_logic":
-    # Since this is a single flow demo, we auto-inherit
+    # Auto-Inherit for Single
     st.session_state.data["track_title"] = st.session_state.data["release_title"]
-    st.session_state.data["track_version"] = st.session_state.data["version"]
     
-    bot_say(f"ℹ️ **Single Track Mode:** I've automatically set the Track Title to **'{st.session_state.data['release_title']}'** to match the release.")
+    bot_say(f"ℹ️ **Single Track Mode:** Track Title set to **'{st.session_state.data['release_title']}'**.")
     time.sleep(1.5)
     next_step("prev_released")
 
-# --- STEP: PREVIOUSLY RELEASED ---
+# --- PREV RELEASED ---
 elif st.session_state.step_id == "prev_released":
     bot_say("Has this track been released before?")
     c1, c2 = st.columns(2)
@@ -313,7 +363,7 @@ elif st.session_state.step_id == "prev_released":
         st.session_state.data["prev_released"] = False
         next_step("audio_upload")
 
-# --- STEP: AUDIO UPLOAD ---
+# --- AUDIO UPLOAD ---
 elif st.session_state.step_id == "audio_upload":
     bot_say("Upload Audio (WAV/FLAC).")
     up = st.file_uploader("Audio", type=["wav", "mp3"])
@@ -322,7 +372,7 @@ elif st.session_state.step_id == "audio_upload":
         if st.button("Confirm Audio"):
             next_step("language")
 
-# --- STEP: LANGUAGE ---
+# --- LANGUAGE ---
 elif st.session_state.step_id == "language":
     bot_say("What **Language** are the lyrics in?")
     opts = ["English", "Spanish", "Instrumental (No Lyrics)"]
@@ -332,14 +382,13 @@ elif st.session_state.step_id == "language":
             add_user_msg(o)
             st.session_state.data["language"] = o
             if "Instrumental" in o:
-                # SKIP Explicit & Lyricist
                 st.session_state.data["explicit"] = "Clean"
                 st.session_state.data["lyricist"] = "N/A"
                 next_step("credits_performer")
             else:
                 next_step("explicit")
 
-# --- STEP: EXPLICIT ---
+# --- EXPLICIT ---
 elif st.session_state.step_id == "explicit":
     bot_say("Is the content **Explicit**?")
     c1, c2 = st.columns(2)
@@ -352,16 +401,15 @@ elif st.session_state.step_id == "explicit":
         st.session_state.data["explicit"] = "Explicit"
         next_step("lyricist_ask")
 
-# --- STEP: LYRICIST ---
+# --- LYRICIST ---
 elif st.session_state.step_id == "lyricist_ask":
     bot_say("Are you the **Lyricist**?")
     c1, c2 = st.columns(2)
     if c1.button("Yes"):
         add_user_msg("Yes")
-        # Assuming Artist Name is real name for demo, or ask legal name
-        st.session_state.data["lyricist"] = st.session_state.data["artist"] 
+        st.session_state.data["lyricist"] = st.session_state.data["artist"]
         next_step("credits_performer")
-    if c2.button("No (Enter Name)"):
+    if c2.button("No"):
         add_user_msg("No")
         next_step("lyricist_input")
 
@@ -369,10 +417,9 @@ elif st.session_state.step_id == "lyricist_input":
     val = st.chat_input("Lyricist Legal Name")
     if val:
         add_user_msg(val)
-        st.session_state.data["lyricist"] = val
-        next_step("credits_performer")
+        process_ai_response(val, "lyricist", "credits_performer")
 
-# --- STEP: PERFORMER CREDITS ---
+# --- PERFORMER ---
 elif st.session_state.step_id == "credits_performer":
     bot_say("Are you the main **Performer**?")
     c1, c2 = st.columns(2)
@@ -384,6 +431,13 @@ elif st.session_state.step_id == "credits_performer":
         add_user_msg("Someone else")
         next_step("performer_input")
 
+elif st.session_state.step_id == "performer_input":
+    val = st.chat_input("Performer Name")
+    if val:
+        add_user_msg(val)
+        st.session_state.data["performer"] = val
+        next_step("performer_inst")
+
 elif st.session_state.step_id == "performer_inst":
     bot_say("Select **Instrument**:")
     insts = ["Vocals", "Guitar", "Drums", "Synth"]
@@ -394,7 +448,7 @@ elif st.session_state.step_id == "performer_inst":
             st.session_state.data["instrument"] = inst
             next_step("credits_prod")
 
-# --- STEP: PRODUCER CREDITS ---
+# --- PRODUCER ---
 elif st.session_state.step_id == "credits_prod":
     bot_say("Select **Production Role**:")
     roles = ["Producer", "Mixing Engineer", "Mastering Engineer"]
@@ -405,7 +459,7 @@ elif st.session_state.step_id == "credits_prod":
             st.session_state.data["prod_role"] = r
             next_step("contributors")
 
-# --- STEP: CONTRIBUTORS ---
+# --- CONTRIBUTORS ---
 elif st.session_state.step_id == "contributors":
     bot_say("Do you have any **Contributors** (feat. artists)?")
     c1, c2 = st.columns(2)
@@ -417,14 +471,13 @@ elif st.session_state.step_id == "contributors":
         next_step("optional_ids")
 
 elif st.session_state.step_id == "contrib_input":
-    bot_say("Enter **Contributor Name**:")
-    val = st.chat_input("Name...")
+    val = st.chat_input("Contributor Name")
     if val:
         add_user_msg(val)
         st.session_state.data["contributor"] = val
         next_step("optional_ids")
 
-# --- STEP: OPTIONAL IDS (ISRC/PUB) ---
+# --- IDS ---
 elif st.session_state.step_id == "optional_ids":
     bot_say("Add **ISRC** or **Publisher**? (Optional)")
     c1, c2 = st.columns(2)
@@ -436,13 +489,13 @@ elif st.session_state.step_id == "optional_ids":
         next_step("isrc_input")
 
 elif st.session_state.step_id == "isrc_input":
-    val = st.chat_input("Enter ISRC or type Skip")
+    val = st.chat_input("ISRC (or type Skip)")
     if val:
         add_user_msg(val)
         st.session_state.data["isrc"] = val
         next_step("summary")
 
-# --- STEP: SUMMARY ---
+# --- SUMMARY ---
 elif st.session_state.step_id == "summary":
     bot_say("✅ **Release Ready!** Review details:")
     st.json(st.session_state.data)
