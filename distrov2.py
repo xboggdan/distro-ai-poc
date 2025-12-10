@@ -16,8 +16,7 @@ groq_key = st.secrets.get("GROQ_API_KEY")
 if gemini_key:
     genai.configure(api_key=gemini_key)
 
-# --- 2. OFFICIAL POLICY DOCUMENTATION (RAW SOURCE) ---
-# This contains the specific validations, forbidden words, and ID references.
+# --- 2. OFFICIAL POLICY DOCUMENTATION ---
 OFFICIAL_POLICY_DOC = """
 I. Background 
 The goal is to facilitate healthier and more accurate submissions, significantly reducing the likelihood of rejection by our QC team.
@@ -34,7 +33,7 @@ Field Validations:
 - if the user inputs specific words within parentheses and/or brackets, we throw an exception.
 - Forbidden_Words #1: feat., featuring, produced, prod., feat, ft,ft.
 - Forbidden_Words #2: Acoustic, Remastered, Freestyle, Instrumental, remixed, remix
-- Words 1 -> Special Characters including emojis not allowed here: \/!@#$%^&*+= (Note: Brackets (){}[] ARE allowed, per Justin Sullivan's update).
+- Words 1 -> Special Characters including emojis not allowed here: \/!@#$%^&*+= (Note: Brackets (){}[] ARE allowed).
 Validation Message: Please avoid restricted words like feat, prod, remix.
 
 ID 2: Version (Optional)
@@ -57,25 +56,20 @@ Description: First and last name of the Artist. Ideally legal name.
 Field Validations:
 - Special Characters not allowed here: (){}[]\/!@#$%^&*+=
 - Forbidden Words: music, beats (automatic rejection from Fuga).
-Validation Message: Provide a legal first and last name.
+- Requirement: Must be at least two names (First and Last).
+Validation Message: Provide a legal first and last name (e.g. John Doe).
 
 ID 9: Track Title (Mandatory)
 Field Validations:
 - Forbidden_Words #1: feat., featuring, produced, prod.
 - Forbidden_Words #2: Acoustic, Remastered, Freestyle, Instrumental, remixed, remix
 - Brackets are allowed.
-
-JUSTIN SULLIVAN UPDATE (Override):
-- Allow brackets in the title since it may be used as a secondary title (), [], {}.
-- Allow special characters in contributors names.
-- Keep validation strictly for composers and lyricists (No special chars).
 """
 
 # --- 3. THE VALIDATION ENGINE ---
 
 class DistroBotStateMachine:
     def __init__(self):
-        # We map the steps to the specific ID in the documentation
         self.steps = {
             1: {
                 "field": "Release Title",
@@ -99,7 +93,7 @@ class DistroBotStateMachine:
                 "field": "Composer",
                 "doc_id": "ID 11",
                 "prompt": "Who is the Composer? (Legal First & Last Name required).",
-                "error_msg": "Validation Error: Composer must be a real name. No 'music', 'beats', or special characters allowed."
+                "error_msg": "Validation Error: Composer must be a real name (First Last). No 'music', 'beats', or special characters."
             },
             5: {
                 "field": "Confirmation",
@@ -116,57 +110,70 @@ class DistroBotStateMachine:
 
 def clean_json_response(raw_text):
     """
-    Strips out conversational text and returns ONLY the valid JSON string.
+    Robust JSON cleaner that handles Markdown blocks and extra text.
     """
+    if not raw_text: return None
     try:
-        match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        # Remove markdown code blocks if present (e.g. ```json ... ```)
+        clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+        
+        # Try finding the first JSON object
+        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
         if match:
             return json.loads(match.group(0))
-        return json.loads(raw_text)
-    except Exception:
+        return json.loads(clean_text)
+    except Exception as e:
+        st.error(f"Debug Info: JSON Parse failed. AI Output: {raw_text}")
         return None
 
 def query_llm_for_validation(field_name, doc_id, user_input):
     """
-    Asks the AI to validate the input against the OFFICIAL_POLICY_DOC.
+    Uses JSON Mode to strictly enforce structured output.
     """
     system_prompt = f"""
-    You are a Music Distribution Quality Control (QC) Engine.
+    You are a QC Logic Engine.
     
-    YOUR KNOWLEDGE BASE (The Policy):
+    POLICY:
     {OFFICIAL_POLICY_DOC}
     
     TASK:
-    1. Analyze the user's input: "{user_input}"
-    2. Check it against the rules for Field "{field_name}" (Reference {doc_id} in the Policy).
-    3. Check for Global Rules (No Emojis).
-    4. Check for Specific Forbidden Words listed in the Policy for this ID.
+    Analyze input: "{user_input}"
+    Check against Field "{field_name}" (Ref: {doc_id}).
     
-    OUTPUT FORMAT (JSON ONLY):
+    STRICT RULES:
+    - If Field is 'Composer', REJECT if it is only one word. It must be First and Last name.
+    - Check for forbidden characters and words.
+    
+    OUTPUT FORMAT:
+    You must output a valid JSON object.
     {{
-        "value": "Cleaned Version of Input (Capitalize first letters)",
-        "valid": true or false,
-        "reason": "If false, quote the specific rule violated from the Policy"
+        "value": "Cleaned Input",
+        "valid": true/false,
+        "reason": "Short reason if invalid"
     }}
     """
     
-    # Priority: Groq -> OpenAI -> Gemini
     messages = [{"role": "system", "content": system_prompt}]
     
-    extracted_text = "Error"
+    extracted_text = None
     
+    # 1. TRY GROQ (With JSON Mode)
     if groq_key:
         try:
-            client = openai.OpenAI(base_url="https://api.groq.com/openai/v1", api_key=groq_key)
+            client = openai.OpenAI(base_url="[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)", api_key=groq_key)
             resp = client.chat.completions.create(
                 model="llama-3.1-8b-instant", 
                 messages=messages,
-                temperature=0 # Strict logic
+                temperature=0,
+                response_format={"type": "json_object"}  # <--- THE FIX
             )
             extracted_text = resp.choices[0].message.content
-        except: pass
+        except Exception as e:
+            # st.error(f"Groq Error: {e}") # Uncomment to debug
+            pass
 
-    elif gemini_key:
+    # 2. FALLBACK TO GEMINI (Text Mode)
+    if not extracted_text and gemini_key:
         try:
             model = genai.GenerativeModel("gemini-1.5-flash")
             extracted_text = model.generate_content(system_prompt).text
@@ -176,7 +183,6 @@ def query_llm_for_validation(field_name, doc_id, user_input):
 
 # --- 5. MAIN APP LOGIC ---
 
-# Initialize State
 if "fsm" not in st.session_state:
     st.session_state.fsm = DistroBotStateMachine()
 if "current_step" not in st.session_state:
@@ -187,14 +193,13 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # UI Layout
-st.title("🛡️ Distro QC Bot (Strict Mode)")
+st.title("🛡️ Distro QC Bot (Fixed)")
 col1, col2 = st.columns([2, 1])
 
 # Sidebar: Debug View
 with col2:
     st.subheader("QC Status")
     st.json(st.session_state.collected_data)
-    st.write(f"**Wizard Step:** {st.session_state.current_step}")
     if st.button("Reset Wizard"):
         st.session_state.current_step = 1
         st.session_state.collected_data = {}
@@ -203,67 +208,48 @@ with col2:
 
 # Chat Area
 with col1:
-    # Display History
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Initial Greeting
     if len(st.session_state.chat_history) == 0:
         first_config = st.session_state.fsm.get_current_config(1)
         st.session_state.chat_history.append({"role": "assistant", "content": first_config["prompt"]})
         st.rerun()
 
-    # User Input
     if user_input := st.chat_input("Enter details..."):
-        # 1. Display User Message
         st.session_state.chat_history.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # 2. Identify Current Step
         step_idx = st.session_state.current_step
         step_config = st.session_state.fsm.get_current_config(step_idx)
 
-        # 3. VALIDATION PHASE
-        if step_idx <= 4: # Validation Steps
-            with st.spinner(f"Checking '{step_config['field']}' against Policy {step_config['doc_id']}..."):
+        if step_idx <= 4:
+            with st.spinner("Validating..."):
                 qc_result = query_llm_for_validation(
                     step_config["field"], 
                     step_config["doc_id"], 
                     user_input
                 )
 
-            # 4. DECISION GATE
             if qc_result and qc_result.get("valid") == True:
-                # Success
-                value = qc_result.get("value")
-                st.session_state.collected_data[step_config["field"]] = value
-                
-                # Advance
+                st.session_state.collected_data[step_config["field"]] = qc_result.get("value")
                 st.session_state.current_step += 1
                 next_step = st.session_state.fsm.get_current_config(st.session_state.current_step)
-                
-                if next_step:
-                    bot_reply = next_step["prompt"]
-                else:
-                    bot_reply = "Validation Complete. Type 'Yes' to finalize."
-            
+                bot_reply = next_step["prompt"] if next_step else "Validation Complete. Type 'Yes' to finalize."
             else:
-                # Failure (Show the specific policy reason)
-                reason = qc_result.get("reason", "Unknown policy violation") if qc_result else "Invalid format."
+                reason = qc_result.get("reason", "Formatting Error") if qc_result else "System Error (JSON Parsing)."
                 bot_reply = f"🚫 **Rejected:** {reason}\n\n*Reference: {step_config['doc_id']}*"
 
-        elif step_idx == 5: # Confirmation
+        elif step_idx == 5:
             if "yes" in user_input.lower():
                 bot_reply = "✅ Submitted to Distribution Queue."
                 st.balloons()
             else:
                 bot_reply = "❌ Submission Aborted."
 
-        # 5. Output
         st.session_state.chat_history.append({"role": "assistant", "content": bot_reply})
         with st.chat_message("assistant"):
             st.markdown(bot_reply)
-        
         st.rerun()
