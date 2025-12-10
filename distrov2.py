@@ -34,10 +34,10 @@ def get_openai_response(prompt):
 
 # List of models to try in order (Newest/Fastest -> Older/Slower)
 MODEL_ROSTER = [
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro"
+    "gemini-2.0-flash-exp",   # Try this first
+    "gemini-1.5-flash",       # Standard fallback
+    "gemini-1.5-flash-8b",    # Lightweight fallback
+    "gemini-1.5-pro"          # Final resort
 ]
 
 def get_gemini_response(prompt):
@@ -121,4 +121,5 @@ if st.button("Submit") and user_input:
             st.success(f"✅ Used Model: **{used_model}**")
             
         st.write(response_text)
+
 
