@@ -1,83 +1,118 @@
 import streamlit as st
 import time
 
-# 1. Page Configuration (Must be the first line)
-st.set_page_config(
-    page_title="BandLab Distribution Assistant",
-    page_icon="🚀",
-    layout="wide"  # Uses more screen real estate
-)
+# 1. Page Configuration
+st.set_page_config(page_title="BandLab Distribution Assistant", page_icon="🚀", layout="wide")
 
-# 2. Custom CSS for "BandLab" styling
+# 2. Custom CSS
 st.markdown("""
     <style>
-    /* Main container styling */
-    .stApp {
-        background-color: #f8f9fa; /* Light grey background for contrast */
-    }
-    /* Headers */
-    h1, h2, h3 {
-        color: #d13239; /* BandLab Red-ish color */
-        font-family: 'Helvetica Neue', sans-serif;
-    }
-    /* Chat message styling */
-    .stChatMessage {
-        background-color: white;
-        border-radius: 10px;
-        padding: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
+    .stApp { background-color: #f8f9fa; }
+    h1, h2, h3 { color: #d13239; font-family: 'Helvetica Neue', sans-serif; }
+    .stChatMessage { background-color: white; border-radius: 10px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    /* Highlight the active step */
+    .step-active { border-left: 5px solid #d13239; padding-left: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. Sidebar: The "Knowledge Base" lives here now (Cleaner UI)
+# 3. Sidebar
 with st.sidebar:
     st.header("🧠 Knowledge Base")
-    st.info("I am listening to your conversation. If you ask a question, I will answer here.")
-    
-    with st.expander("How to use this guide", expanded=True):
-        st.write("I'm your **Guide**. Ask me questions like *'What is a UPC?'* or *'Why do I need a legal name?'*.")
+    st.info("I am listening. Ask questions like 'What is an ISRC?' here.")
+    with st.expander("Guide Options", expanded=True):
+        st.write("Current Mode: **Single Release**")
 
-# 4. Main Content Area
+# 4. Session State Management (The "Brain")
+if "step" not in st.session_state:
+    st.session_state.step = 1
+if "release_data" not in st.session_state:
+    st.session_state.release_data = {"title": "New Single", "file": None, "genre": ""}
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Let's get your **Single** ready. \n\n**Step 1:** Please upload your Audio File."}
+    ]
+
+# 5. Main Layout
 st.title("🚀 BandLab Distribution Assistant")
 st.markdown("---")
 
-# Layout: We can keep it focused in the center or use columns if needed
 col1, col2 = st.columns([2, 1])
 
+# --- LEFT COLUMN: THE WIZARD ---
 with col1:
     st.subheader("📝 Release Wizard")
-    
-    # Mocking the chat history for the demo
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Let's get your **Single** ready for Spotify. \n\n**Step 1:** Please upload your Audio File."}
-        ]
 
-    # Display chat messages nicely
+    # Display Chat History
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # File Uploader (Logic: Only show if waiting for file)
-    uploaded_file = st.file_uploader("Select Audio File (WAV/MP3)", type=['wav', 'mp3'])
-    
-    if uploaded_file:
-        with st.chat_message("user"):
-            st.write(f"Uploaded: **{uploaded_file.name}**")
+    # --- STEP 1: UPLOAD ---
+    if st.session_state.step == 1:
+        uploaded_file = st.file_uploader("Select Audio File (WAV/MP3)", type=['wav', 'mp3'], key="audio_uploader")
         
-        # Simulate agent response
-        with st.spinner("Analyzing audio..."):
-            time.sleep(1) # Fake processing
-            st.success("Audio validated successfully!")
-            # Here you would trigger your backend logic
+        if uploaded_file:
+            # Save file info
+            st.session_state.release_data["file"] = uploaded_file.name
+            
+            # Show simulated processing
+            with st.spinner("Analyzing audio fingerprint..."):
+                time.sleep(1.5) 
+            
+            # Add completion message to chat
+            st.session_state.messages.append({"role": "user", "content": f"Uploaded: **{uploaded_file.name}**"})
+            st.session_state.messages.append({"role": "assistant", "content": "Audio looks good! ✅ \n\n**Step 2:** What is the **Title** of this track?"})
+            
+            # Advance to Step 2
+            st.session_state.step = 2
+            st.rerun()
 
+    # --- STEP 2: METADATA ---
+    if st.session_state.step == 2:
+        with st.form("metadata_form"):
+            st.write("Enter Track Details:")
+            title_input = st.text_input("Track Title", value=st.session_state.release_data["title"])
+            genre_input = st.selectbox("Genre", ["Pop", "Hip-Hop", "Rock", "Electronic", "R&B"])
+            
+            submitted = st.form_submit_button("Next Step ➡")
+            
+            if submitted:
+                # Update Data
+                st.session_state.release_data["title"] = title_input
+                st.session_state.release_data["genre"] = genre_input
+                
+                # Add to chat
+                st.session_state.messages.append({"role": "user", "content": f"Title: {title_input}, Genre: {genre_input}"})
+                st.session_state.messages.append({"role": "assistant", "content": "Got it. \n\n**Step 3:** Now, please upload your **Cover Art** (3000x3000px)."})
+                
+                # Advance Step
+                st.session_state.step = 3
+                st.rerun()
+
+    # --- STEP 3: ARTWORK (Demo End) ---
+    if st.session_state.step == 3:
+        st.file_uploader("Upload Cover Art (JPG/PNG)", type=['jpg', 'png'])
+        st.info("Demo stops here for now. Backend connection required for next steps.")
+
+# --- RIGHT COLUMN: REAL-TIME PREVIEW ---
 with col2:
-    # Optional: Context sensitive help or preview
     st.subheader("👀 Preview")
-    st.caption("As you fill in data, a preview of your release will appear here.")
     
-    # Placeholder for a "Card" view of the release
+    # Live Preview Card
     container = st.container(border=True)
-    container.markdown("**New Single**")
-    container.image("https://via.placeholder.com/150", caption="Cover Art Placeholder")
+    
+    # 1. Cover Art (Placeholder or Real if uploaded)
+    container.image("https://placehold.co/400x400?text=Cover+Art", use_container_width=True)
+    
+    # 2. Track Data
+    container.markdown(f"### {st.session_state.release_data.get('title', 'New Single')}")
+    
+    genre_display = st.session_state.release_data.get('genre', '')
+    if genre_display:
+        container.caption(f"Genre: {genre_display}")
+    
+    # 3. File Status
+    if st.session_state.release_data["file"]:
+        container.success(f"🎵 File: {st.session_state.release_data['file']}")
+    else:
+        container.warning("🎵 No Audio File")
