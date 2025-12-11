@@ -1,3 +1,306 @@
-git add index.html
-git commit -m "Replace frontend with Smart Creator Flow"
-git push
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distro AI Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #0f172a; 
+            color: white;
+        }
+        
+        /* Glassmorphism Cards */
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .input-glass {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            transition: all 0.3s ease;
+        }
+        .input-glass:focus {
+            border-color: #818cf8;
+            background: rgba(0, 0, 0, 0.5);
+            outline: none;
+        }
+
+        /* Animations */
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.4s ease, transform 0.4s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(10px); }
+        
+        .pulse-ring {
+            box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7);
+            animation: pulse-blue 2s infinite;
+        }
+        @keyframes pulse-blue {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-[url('https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=2574&auto=format&fit=crop')] bg-cover bg-center bg-fixed bg-no-repeat">
+
+<div class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-0"></div>
+
+<div id="app" class="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
+    
+    <div class="w-full max-w-4xl flex justify-between items-center mb-8 px-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                <i data-lucide="disc-3" class="text-white"></i>
+            </div>
+            <h1 class="text-xl font-bold tracking-tight">Distro<span class="text-indigo-400">AI</span></h1>
+        </div>
+        <div class="flex gap-2 text-xs font-mono text-slate-400">
+            <span :class="currentStep >= 1 ? 'text-indigo-400' : ''">01.META</span>
+            <span>/</span>
+            <span :class="currentStep >= 2 ? 'text-indigo-400' : ''">02.ROLES</span>
+            <span>/</span>
+            <span :class="currentStep >= 3 ? 'text-indigo-400' : ''">03.AI-SCAN</span>
+        </div>
+    </div>
+
+    <div class="glass-panel w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden min-h-[500px] flex flex-col relative">
+        
+        <div class="h-1 bg-slate-700 w-full">
+            <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500" :style="{ width: (currentStep / 4) * 100 + '%' }"></div>
+        </div>
+
+        <div class="p-10 flex-1 flex flex-col justify-center">
+            
+            <transition name="fade" mode="out-in">
+                
+                <div v-if="currentStep === 1" key="step1">
+                    <h2 class="text-3xl font-bold mb-2">Track Essentials</h2>
+                    <p class="text-slate-400 mb-8">Let's get the metadata right before the AI checks it.</p>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="col-span-2">
+                            <label class="text-xs font-bold text-slate-500 uppercase ml-1">Release Title</label>
+                            <input v-model="form.title" class="input-glass w-full p-4 rounded-xl text-lg font-medium mt-1" placeholder="e.g. Midnight City">
+                        </div>
+                        
+                        <div>
+                            <label class="text-xs font-bold text-slate-500 uppercase ml-1">Version</label>
+                            <select v-model="form.version" class="input-glass w-full p-4 rounded-xl mt-1">
+                                <option>Original</option>
+                                <option>Radio Edit</option>
+                                <option>Remix</option>
+                                <option>Instrumental</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="text-xs font-bold text-slate-500 uppercase ml-1">Primary Artist</label>
+                            <input v-model="form.artist" class="input-glass w-full p-4 rounded-xl mt-1" placeholder="Artist Name">
+                        </div>
+                    </div>
+                </div>
+
+                <div v-else-if="currentStep === 2" key="step2">
+                    <h2 class="text-3xl font-bold mb-2">Credits & Roles</h2>
+                    <p class="text-slate-400 mb-8">Select your contribution. We'll auto-format the credits.</p>
+
+                    <div class="space-y-4">
+                        <div @click="toggleRole('composer')" 
+                             :class="['cursor-pointer p-5 rounded-xl border transition-all flex items-center gap-4', form.isComposer ? 'bg-indigo-500/20 border-indigo-500' : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800']">
+                            <div class="p-3 bg-indigo-500/20 text-indigo-400 rounded-lg"><i data-lucide="pen-tool"></i></div>
+                            <div class="flex-1">
+                                <h3 class="font-bold text-white">I wrote this song</h3>
+                                <p class="text-sm text-slate-400">Composer / Songwriter</p>
+                            </div>
+                            <div v-if="form.isComposer" class="text-indigo-400"><i data-lucide="check-circle-2"></i></div>
+                        </div>
+
+                        <div @click="toggleRole('performer')" 
+                             :class="['cursor-pointer p-5 rounded-xl border transition-all flex items-center gap-4', form.isPerformer ? 'bg-purple-500/20 border-purple-500' : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800']">
+                            <div class="p-3 bg-purple-500/20 text-purple-400 rounded-lg"><i data-lucide="mic-2"></i></div>
+                            <div class="flex-1">
+                                <h3 class="font-bold text-white">I performed this</h3>
+                                <p class="text-sm text-slate-400">Main Artist / Vocalist</p>
+                            </div>
+                            <div v-if="form.isPerformer" class="text-purple-400"><i data-lucide="check-circle-2"></i></div>
+                        </div>
+
+                        <div v-if="form.version !== 'Instrumental'" @click="toggleRole('lyricist')" 
+                             :class="['cursor-pointer p-5 rounded-xl border transition-all flex items-center gap-4', form.isLyricist ? 'bg-pink-500/20 border-pink-500' : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800']">
+                            <div class="p-3 bg-pink-500/20 text-pink-400 rounded-lg"><i data-lucide="align-left"></i></div>
+                            <div class="flex-1">
+                                <h3 class="font-bold text-white">I wrote the lyrics</h3>
+                                <p class="text-sm text-slate-400">Lyricist</p>
+                            </div>
+                            <div v-if="form.isLyricist" class="text-pink-400"><i data-lucide="check-circle-2"></i></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-else-if="currentStep === 3" key="step3">
+                    <div class="text-center py-10">
+                        
+                        <div v-if="aiStatus === 'scanning'">
+                            <div class="relative w-24 h-24 mx-auto mb-6">
+                                <div class="absolute inset-0 rounded-full border-4 border-slate-700"></div>
+                                <div class="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin"></div>
+                                <div class="absolute inset-0 flex items-center justify-center">
+                                    <i data-lucide="scan-face" class="w-8 h-8 text-indigo-400"></i>
+                                </div>
+                            </div>
+                            <h2 class="text-2xl font-bold animate-pulse">Analyzing Assets...</h2>
+                            <p class="text-slate-400 mt-2">{{ aiMessage }}</p>
+                        </div>
+
+                        <div v-else-if="aiStatus === 'success'" class="animate-bounce-in">
+                            <div class="w-24 h-24 bg-green-500/20 text-green-400 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-green-500/50">
+                                <i data-lucide="shield-check" class="w-12 h-12"></i>
+                            </div>
+                            <h2 class="text-2xl font-bold text-white">All Systems Go</h2>
+                            <p class="text-slate-400 mt-2">Artwork is clean. No copyright strikes found.</p>
+                        </div>
+
+                        <div v-else-if="aiStatus === 'error'">
+                            <div class="w-24 h-24 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-red-500/50">
+                                <i data-lucide="alert-triangle" class="w-12 h-12"></i>
+                            </div>
+                            <h2 class="text-2xl font-bold text-white">Issue Detected</h2>
+                            <p class="text-slate-400 mt-2">Text found on cover art: "Listen Now"</p>
+                            <button @click="runAiFix" class="mt-6 px-6 py-2 bg-indigo-600 rounded-full text-sm font-bold hover:bg-indigo-500 transition">✨ Auto-Fix with AI</button>
+                        </div>
+
+                    </div>
+                </div>
+
+                <div v-else-if="currentStep === 4" key="step4">
+                    <div class="flex flex-col md:flex-row gap-8">
+                        <div class="w-full md:w-1/3">
+                            <div class="aspect-square rounded-xl overflow-hidden shadow-2xl relative group bg-slate-800">
+                                <div class="w-full h-full bg-gradient-to-br from-indigo-900 to-slate-900 flex items-center justify-center">
+                                    <span class="text-6xl">🎵</span>
+                                </div>
+                                <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+                                    <p class="font-bold text-white truncate">{{ form.title }}</p>
+                                    <p class="text-xs text-slate-300">{{ form.artist }}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex-1">
+                            <h2 class="text-3xl font-bold mb-4">Ready for Release</h2>
+                            <div class="space-y-3">
+                                <div class="flex justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                                    <span class="text-slate-400">Title</span>
+                                    <span class="font-medium">{{ form.title }}</span>
+                                </div>
+                                <div class="flex justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                                    <span class="text-slate-400">ISRC</span>
+                                    <span class="font-mono text-indigo-400">US-X92-24-10291</span>
+                                </div>
+                                <div class="flex justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                                    <span class="text-slate-400">UPC</span>
+                                    <span class="font-mono text-indigo-400">892102910291</span>
+                                </div>
+                            </div>
+
+                            <button @click="finish" class="w-full mt-6 bg-green-500 hover:bg-green-400 text-black font-bold py-4 rounded-xl shadow-lg shadow-green-500/20 transition transform hover:-translate-y-1">
+                                🚀 Distribute to Stores
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </transition>
+        </div>
+
+        <div class="p-6 border-t border-slate-700/50 flex justify-between bg-black/20">
+            <button v-if="currentStep > 1" @click="currentStep--" class="text-slate-400 hover:text-white font-medium px-4 py-2 transition">Back</button>
+            <div v-else></div>
+
+            <button v-if="currentStep < 3" @click="nextStep" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-8 py-2 rounded-full shadow-lg shadow-indigo-600/20 transition">
+                Continue
+            </button>
+            <button v-if="aiStatus === 'success' && currentStep === 3" @click="currentStep++" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-8 py-2 rounded-full shadow-lg transition">
+                Review Release
+            </button>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    const { createApp } = Vue;
+
+    createApp({
+        data() {
+            return {
+                currentStep: 1,
+                aiStatus: 'idle', // idle, scanning, error, success
+                aiMessage: 'Initializing...',
+                form: {
+                    title: '',
+                    version: 'Original',
+                    artist: '',
+                    isComposer: false,
+                    isPerformer: false,
+                    isLyricist: false,
+                }
+            }
+        },
+        mounted() {
+            lucide.createIcons();
+        },
+        updated() {
+            lucide.createIcons();
+        },
+        methods: {
+            toggleRole(role) {
+                if(role === 'composer') this.form.isComposer = !this.form.isComposer;
+                if(role === 'performer') this.form.isPerformer = !this.form.isPerformer;
+                if(role === 'lyricist') this.form.isLyricist = !this.form.isLyricist;
+            },
+            nextStep() {
+                if(this.currentStep === 2) {
+                    this.currentStep = 3;
+                    this.startAiSimulation();
+                } else {
+                    this.currentStep++;
+                }
+            },
+            startAiSimulation() {
+                this.aiStatus = 'scanning';
+                this.aiMessage = "Checking Apple Music Guidelines...";
+                
+                setTimeout(() => { this.aiMessage = "Scanning Artwork for Text..." }, 1500);
+                setTimeout(() => { this.aiMessage = "Fingerprinting Audio (ACRCloud)..." }, 3000);
+                
+                setTimeout(() => {
+                    // Simulate a random "Error" for demo purposes 50% of the time, or just Success
+                    // Let's force Success for a clean demo
+                    this.aiStatus = 'success';
+                }, 4500);
+            },
+            runAiFix() {
+                this.aiStatus = 'scanning';
+                this.aiMessage = "Generative AI Removing Text...";
+                setTimeout(() => { this.aiStatus = 'success'; }, 2000);
+            },
+            finish() {
+                alert("Release Pushed to Distribution Queue!");
+                console.log(JSON.stringify(this.form));
+            }
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
