@@ -3,9 +3,9 @@ import time
 import random
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="DistroBot V9", page_icon="💿", layout="wide")
+st.set_page_config(page_title="DistroBot V10", page_icon="💿", layout="wide")
 
-# --- CSS FOR "WAY BETTER UI" ---
+# --- CSS FOR UI & TECH BADGES ---
 st.markdown("""
 <style>
     .stChatMessage {
@@ -14,23 +14,31 @@ st.markdown("""
         padding: 10px;
         border: 1px solid #eee;
     }
-    .stButton button {
-        border-radius: 20px;
-        font-weight: bold;
+    .tech-badge {
+        font-size: 0.75em;
+        color: #666;
+        background-color: #e0e0e0;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-top: 5px;
+        display: inline-block;
+        font-family: monospace;
     }
-    /* Fix for chat input visibility */
-    .stChatInput {
-        position: fixed;
-        bottom: 0;
-    }
+    .source-logic { border-left: 3px solid #ffcc00; } /* Yellow for Backend Logic */
+    .source-ai { border-left: 3px solid #00ccff; }    /* Blue for AI Agent */
 </style>
 """, unsafe_allow_html=True)
 
 # --- SESSION STATE INITIALIZATION ---
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! I'm DistroBot V9. Let's get your music on Spotify and Apple Music. What is the **Release Title**?"}]
+    st.session_state.messages = [{
+        "role": "assistant", 
+        "content": "Hello! I'm DistroBot V10. Let's get your music on Spotify. What is the **Release Title**?",
+        "source": "Backend Logic",
+        "model": "Hardcoded v1.0"
+    }]
 if "step" not in st.session_state:
-    st.session_state.step = "title"  # title, version, artist, genre, cover_art, cover_fix, audio, contributors, summary
+    st.session_state.step = "title" 
 if "user_data" not in st.session_state:
     st.session_state.user_data = {}
 if "mode" not in st.session_state:
@@ -38,294 +46,249 @@ if "mode" not in st.session_state:
 
 # --- HELPER FUNCTIONS ---
 
-def simulate_ai_extraction(user_input, field_type):
+def add_message(role, content, source="User", model="N/A"):
+    st.session_state.messages.append({
+        "role": role, 
+        "content": content, 
+        "source": source, 
+        "model": model
+    })
+
+def simulate_ai_extraction(user_input):
     """
-    Simulates 'Smart AI' that extracts entities from conversational sentences.
-    In a real scenario, this would call your agent_api.py/OpenAI.
+    Simulates extracting the core entity from a conversational sentence.
     """
-    triggers = ["my title is", "the title is", "it's called", "name is", "release title is"]
+    triggers = ["my title is", "release title is", "name is", "called"]
     cleaned = user_input
     
-    # Simple rule-based extraction to demonstrate logic
+    # 1. AI Extraction Simulation
     lower_input = user_input.lower()
     for trigger in triggers:
         if trigger in lower_input:
-            # Split and take the part after the trigger
             start_index = lower_input.find(trigger) + len(trigger)
             cleaned = user_input[start_index:].strip()
-            # Remove common punctuation at ends
             cleaned = cleaned.strip('".')
-            return cleaned
+            return cleaned, "NLP Entity Extraction", "GPT-4o-Mini (Simulated)"
+            
+    return user_input.strip(), "Direct Input", "Rule-Engine v2"
+
+def get_educational_response(query):
+    """
+    Simulates a RAG (Retrieval Augmented Generation) response for the Educational Mode.
+    """
+    query = query.lower()
     
-    return user_input.strip()
+    # Knowledge Base Simulation
+    kb = {
+        "royalties": "You keep 100% of your royalties. We do not take a cut. Payouts are monthly via PayPal.",
+        "membership": "No, you do not need a paid membership to distribute. Standard distribution is free.",
+        "upc": "A UPC (Universal Product Code) is a unique barcode for your release. We generate one for you automatically for free.",
+        "isrc": "ISRCs are unique codes for individual tracks. We assign these automatically if you don't have them.",
+        "cover": "For cover songs, you must obtain a mechanical license. We can help you manage this via our partners.",
+        "spotify": "Delivery to Spotify usually takes 24-48 hours after we approve your release.",
+        "apple": "Apple Music ingestion can take up to 3-5 days depending on their review queue.",
+        "life": "I am a robot, so I have no life, but I hope yours is filled with great music! 🎵"
+    }
+    
+    # Simple Keyword Search
+    for key, answer in kb.items():
+        if key in query:
+            return answer, "RAG (Retrieval)", "VectorDB + GPT-3.5"
+    
+    return "I can help with distribution, royalties, and metadata. Could you clarify your question?", "Fallback Logic", "Default Intent Classifier"
 
-def add_message(role, content):
-    st.session_state.messages.append({"role": role, "content": content})
-
-# --- SIDEBAR: SETTINGS & EDITING ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🎛 Control Center")
-    
-    # Mode Toggle
     mode = st.radio("Interaction Mode", ["Distribution Flow", "Educational / Help"], index=0 if st.session_state.mode == "Distribution Flow" else 1)
+    
     if mode != st.session_state.mode:
         st.session_state.mode = mode
         st.rerun()
 
     st.divider()
-
-    # README (Expanded by default as requested)
-    with st.expander("📖 README & Architecture", expanded=True):
-        st.markdown("""
-        **DistroBot V9 Architecture**
-        - **Core:** Python (Streamlit)
-        - **Logic:** State Machine for Metadata
-        - **Models:** Connected to `list_models.py`
+    with st.expander("📝 Metadata Debugger", expanded=True):
+        st.json(st.session_state.user_data)
         
-        **How it works:**
-        1. AI extracts entities from natural language.
-        2. Strict validation for DSP compliance.
-        3. Automated Asset Checks (ACR/Vision).
-        """)
-
-    # Edit Past Answers (New Feature)
-    if st.session_state.mode == "Distribution Flow" and st.session_state.user_data:
-        with st.expander("✏️ Edit Metadata", expanded=False):
-            st.write("Need to change something?")
-            for key, value in st.session_state.user_data.items():
-                new_val = st.text_input(f"Edit {key}", value)
-                if new_val != value:
-                    st.session_state.user_data[key] = new_val
-                    st.success(f"Updated {key}!")
-
     if st.button("Reset Session"):
         st.session_state.clear()
         st.rerun()
 
-# --- MAIN APP LOGIC ---
+# --- MAIN RENDER LOOP ---
 
-# 1. Display Chat History
+# 1. Display Chat History with Tech Details
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+        st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            # The "Tech Badge"
+            st.markdown(f"""
+            <div class='tech-badge' title='Technical details'>
+               ⚙️ Source: {msg['source']} | 🧠 Model: {msg['model']}
+            </div>
+            """, unsafe_allow_html=True)
 
-# 2. EDUCATIONAL MODE
+# 2. INPUT HANDLING
+
 if st.session_state.mode == "Educational / Help":
-    user_input = st.chat_input("Ask me anything about music distribution...")
+    # EDUCATIONAL MODE LOGIC
+    user_input = st.chat_input("Ask about Royalties, UPC, Membership...")
     if user_input:
         add_message("user", user_input)
-        with st.chat_message("user"):
-            st.write(user_input)
         
-        # Mock Response Logic for Education
-        response = "I can help with that! According to BandLab Terms and FAQ, you keep 100% of your rights. "
-        if "royalties" in user_input.lower():
-            response += "Royalties are paid out monthly via PayPal once you reach the threshold."
-        elif "cover" in user_input.lower():
-            response += "For cover songs, you must obtain a mechanical license unless you use our distribution partner's cover song clearing service."
+        # Get smart response
+        response_text, src, mdl = get_educational_response(user_input)
         
-        with st.chat_message("assistant"):
-            st.write(response)
-        add_message("assistant", response)
+        add_message("assistant", response_text, source=src, model=mdl)
+        st.rerun()
 
-# 3. DISTRIBUTION FLOW MODE (The Main Machine)
 else:
-    # We use a placeholder for inputs so they appear at the bottom or flow naturally
-    input_placeholder = st.empty()
-
+    # DISTRIBUTION FLOW LOGIC
+    
     # --- STEP: TITLE ---
     if st.session_state.step == "title":
         user_input = st.chat_input("Enter release title...")
         if user_input:
             add_message("user", user_input)
-            # AI Extraction Logic
-            extracted_title = simulate_ai_extraction(user_input, "title")
+            
+            extracted_title, source, model = simulate_ai_extraction(user_input)
             st.session_state.user_data["Release Title"] = extracted_title
             
-            response = f"Got it. I've set the title to **'{extracted_title}'**. \n\nNow, select the **Version Type**."
-            add_message("assistant", response)
+            resp = f"Got it. Title set to: **'{extracted_title}'**."
+            add_message("assistant", resp, source=source, model=model)
+            
+            # Transition
+            time.sleep(0.5)
             st.session_state.step = "version"
             st.rerun()
 
-    # --- STEP: VERSION (Dropdown Logic) ---
+    # --- STEP: VERSION (Dropdown) ---
     elif st.session_state.step == "version":
-        # Using a form container to make it look like a UI step
-        with st.container():
-            version_options = [
-                "Original", "Alternate Take", "Instrumental", "Radio Edit", "Extended", 
-                "Remastered", "Sped Up", "Slowed Down", "Lo-Fi", "Acapella", 
-                "Acoustic", "Deluxe", "Demo", "Freestyle", "Karaoke", 
-                "Live", "Remix", "Slowed and Reverb", "Other"
-            ]
+        # We render the dropdown inside a chat message to make it feel conversational
+        with st.chat_message("assistant"):
+            st.write("Select the **Version Type** below:")
             
-            col1, col2 = st.columns([3, 1])
+            col1, col2 = st.columns([2,1])
             with col1:
-                selected_version = st.selectbox("Select Version Type", version_options, key="ver_select")
+                version_options = [
+                    "Original", "Alternate Take", "Instrumental", "Radio Edit", "Extended", 
+                    "Remastered", "Remix", "Other"
+                ]
+                selected_version = st.selectbox("Version Type", version_options, key="v_select")
             
-            # Conditional Logic Variables
+            # Dynamic Fields
             year_input = None
             remix_confirm = False
             other_input = None
-
-            # Conditional UI
-            if selected_version == "Remastered":
-                year_input = st.number_input("Year of Original Version", min_value=1900, max_value=2024)
             
-            if selected_version == "Remix":
-                st.warning("⚠️ Remix Policy Check")
-                remix_confirm = st.checkbox("I confirm I have the rights/permission for this remix.")
-
-            if selected_version == "Other":
-                other_input = st.text_input("Please specify the version type:")
+            if selected_version == "Remastered":
+                year_input = st.number_input("Original Year", 1900, 2025)
+            elif selected_version == "Remix":
+                st.warning("⚠️ You must have permission for remixes.")
+                remix_confirm = st.checkbox("I confirm I have rights.")
+            elif selected_version == "Other":
+                other_input = st.text_input("Specify Version Type")
 
             if st.button("Confirm Version"):
-                # Validation
+                # VALIDATION LOGIC
                 valid = True
-                final_version_string = selected_version
-
-                if selected_version == "Remix" and not remix_confirm:
-                    st.error("Please confirm you understand the remix policy to proceed.")
-                    valid = False
+                final_ver = selected_version
                 
-                if selected_version == "Other":
-                    if not other_input:
-                        st.error("Please specify the version.")
+                if selected_version == "Remix" and not remix_confirm:
+                    st.error("❌ Permission confirmation required.")
+                    valid = False
+                elif selected_version == "Other":
+                    forbidden = ['original', 'official', 'explicit']
+                    if any(x in other_input.lower() for x in forbidden):
+                        st.error(f"❌ Invalid term in custom version.")
                         valid = False
-                    # Forbidden words check for "Other"
-                    forbidden = ['Original', 'Official', 'Explicit', 'New']
-                    if any(x.lower() in other_input.lower() for x in forbidden):
-                        st.error(f"🚫 FORBIDDEN: You cannot use words like {forbidden} in custom versions.")
-                        valid = False
-                    final_version_string = other_input
-
+                    final_ver = other_input
+                
                 if valid:
-                    # Save Data
                     if selected_version == "Remastered":
-                        st.session_state.user_data["Version"] = f"Remastered ({year_input})"
-                    else:
-                        st.session_state.user_data["Version"] = final_version_string
+                        final_ver = f"Remastered ({year_input})"
                     
-                    add_message("assistant", f"Version set to: **{st.session_state.user_data['Version']}**.")
-                    add_message("assistant", "Who is the **Primary Artist**?")
+                    st.session_state.user_data["Version"] = final_ver
+                    add_message("assistant", f"Version Type saved: **{final_ver}**", source="Validation Logic", model="Rule-Engine v1")
+                    add_message("assistant", "Who is the **Primary Artist**?", source="Flow Controller", model="Hardcoded")
                     st.session_state.step = "artist"
                     st.rerun()
 
     # --- STEP: ARTIST ---
     elif st.session_state.step == "artist":
-        user_input = st.chat_input("Enter artist name...")
+        user_input = st.chat_input("Enter Artist Name")
         if user_input:
             add_message("user", user_input)
-            st.session_state.user_data["Primary Artist"] = user_input
-            add_message("assistant", f"Artist is **{user_input}**. What is the **Genre**?")
-            st.session_state.step = "genre"
+            st.session_state.user_data["Artist"] = user_input
+            add_message("assistant", f"Artist set to **{user_input}**. Upload **Cover Art**.", source="Backend Logic", model="N/A")
+            st.session_state.step = "cover"
             st.rerun()
 
-    # --- STEP: GENRE ---
-    elif st.session_state.step == "genre":
-        user_input = st.chat_input("Enter genre...")
-        if user_input:
-            add_message("user", user_input)
-            st.session_state.user_data["Genre"] = user_input
-            add_message("assistant", "Great. Please upload your **Cover Art**.")
-            st.session_state.step = "cover_art"
-            st.rerun()
-
-    # --- STEP: COVER ART UPLOAD ---
-    elif st.session_state.step == "cover_art":
-        uploaded_file = st.file_uploader("Upload 3000x3000px JPG/PNG", type=['jpg', 'png'])
+    # --- STEP: COVER ART ---
+    elif st.session_state.step == "cover":
+        uploaded_file = st.file_uploader("Upload Art (3000x3000px)", type=['jpg', 'png'])
         if uploaded_file:
-            # Simulate "checking" the image
-            with st.spinner("Analyzing image for text compliance..."):
-                time.sleep(1.5)
-            
-            st.image(uploaded_file, width=300, caption="Uploaded Art")
             st.session_state.cover_image = uploaded_file
+            st.image(uploaded_file, width=250, caption="Preview")
             
-            st.warning("⚠️ Detect Text: 'Listen Now on Spotify' found on image.")
-            st.info("Stores reject cover art with marketing text. We can fix this with AI.")
-            
-            if st.button("✨ Auto-Fix with AI"):
-                st.session_state.step = "cover_fix"
-                st.rerun()
+            if st.button("Analyze & Upload"):
+                with st.spinner("🔍 Vision Model checking text..."):
+                    time.sleep(1.5)
+                
+                # Simulate "Dirty" Art
+                st.warning("⚠️ Text Detected: 'Listen on Spotify'")
+                st.info("💡 Recommendation: Use AI to remove marketing text.")
+                
+                if st.button("✨ Auto-Fix (AI)"):
+                    st.session_state.step = "cover_fix"
+                    st.rerun()
 
-    # --- STEP: COVER FIX PREVIEW ---
+    # --- STEP: COVER FIX ---
     elif st.session_state.step == "cover_fix":
-        st.markdown("### 🖼️ Cover Art Clean-Up")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(st.session_state.cover_image, caption="Original (Rejected)")
-        with col2:
-            # In real life, this would be the processed image buffer
-            # We use the same one for demo but imagine it's clean
-            st.image(st.session_state.cover_image, caption="✨ AI Fixed (Clean)", output_format="JPEG")
-            st.success("Removed: 'Listen Now on Spotify' text.")
+        c1, c2 = st.columns(2)
+        c1.image(st.session_state.cover_image, caption="Original")
+        c2.image(st.session_state.cover_image, caption="✨ AI Fixed", output_format="JPEG") # Simulating change
         
-        if st.button("✅ Confirm & Use This Art"):
-            st.session_state.user_data["Cover Art Status"] = "Cleaned by AI"
-            add_message("assistant", "Cover art confirmed clean! Now, please upload your **Audio File** (.wav/.mp3).")
+        if st.button("Use Fixed Artwork"):
+            add_message("assistant", "Art fixed and approved. Upload **Audio**.", source="Vision Pipeline", model="DALL-E 3 / Inpainting")
             st.session_state.step = "audio"
             st.rerun()
 
-    # --- STEP: AUDIO & ACR SIMULATION ---
+    # --- STEP: AUDIO ---
     elif st.session_state.step == "audio":
-        audio_file = st.file_uploader("Upload Audio", type=['wav', 'mp3'])
-        if audio_file:
-            st.audio(audio_file)
-            
-            if st.button("Submit Audio"):
-                with st.status("🎚️ Processing Audio...", expanded=True) as status:
-                    st.write("Checking format...")
-                    time.sleep(1)
-                    st.write("Scanning for explicit content...")
-                    time.sleep(1)
-                    st.write("🤖 Running ACR (Copyright Check)...")
-                    time.sleep(1.5)
-                    
-                    # Randomly simulate a flag for demonstration
-                    is_flagged = True 
-                    
-                    if is_flagged:
-                        status.update(label="⚠️ Potential Match Found", state="warning")
-                    else:
-                        status.update(label="✅ Audio Clean", state="complete")
+        audio = st.file_uploader("Upload WAV/MP3", type=['wav', 'mp3'])
+        if audio:
+            if st.button("Process Audio"):
+                # FIX: Using 'error' state instead of 'warning'
+                status = st.status("🎧 Processing Audio...", expanded=True)
+                status.write("Checking format...")
+                time.sleep(1)
+                status.write("Running ACR (Copyright)...")
+                time.sleep(1)
                 
-                if is_flagged:
-                    st.warning("Our AI heard a sample that sounds like 'Shape of You'.")
-                    st.write("Is this a cover song?")
-                    col1, col2 = st.columns(2)
-                    if col1.button("Yes, it's a cover"):
-                        st.session_state.user_data["Type"] = "Cover"
-                        st.session_state.step = "contributors"
-                        st.rerun()
-                    if col2.button("No, it's original"):
-                        st.session_state.user_data["Type"] = "Original"
-                        st.session_state.step = "contributors"
-                        st.rerun()
+                # Flagged Simulation
+                status.update(label="⚠️ Copyright Match Found", state="error")
+                
+                st.error("ACR Match: 'Shape of You' detected.")
+                st.write("Is this a cover?")
+                
+                c1, c2 = st.columns(2)
+                if c1.button("Yes, Cover"):
+                    st.session_state.user_data["Type"] = "Cover"
+                    add_message("assistant", "Marked as Cover. Any contributors?", source="ACR Cloud API", model="Audio Fingerprinting")
+                    st.session_state.step = "contributors"
+                    st.rerun()
 
     # --- STEP: CONTRIBUTORS ---
     elif st.session_state.step == "contributors":
-        st.write("Do you have other contributors?")
-        has_contributors = st.radio("Contributors?", ["No", "Yes"])
-        
-        if has_contributors == "Yes":
-            c_name = st.text_input("Contributor Name")
-            c_role = st.multiselect("Role", ["Featured Artist", "Producer", "Lyricist", "Composer", "Engineer"])
-            if st.button("Add Contributor"):
-                if "Contributors" not in st.session_state.user_data:
-                    st.session_state.user_data["Contributors"] = []
-                st.session_state.user_data["Contributors"].append(f"{c_name} ({', '.join(c_role)})")
-                st.success(f"Added {c_name}")
-        
-        if st.button("Finish & Review"):
-            st.session_state.step = "summary"
+        if st.button("No Contributors / Finish"):
+            st.session_state.step = "finish"
             st.rerun()
 
-    # --- STEP: SUMMARY ---
-    elif st.session_state.step == "summary":
-        st.title("🚀 Release Ready!")
+    # --- STEP: FINISH ---
+    elif st.session_state.step == "finish":
+        st.success("Release Ready for Distribution!")
         st.json(st.session_state.user_data)
-        st.balloons()
-        
-        if st.button("Start New Release"):
+        if st.button("Start Over"):
             st.session_state.clear()
             st.rerun()
