@@ -1,13 +1,12 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import json
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(
     page_title="Distro AI Studio",
     page_icon="💿",
     layout="wide",
-    initial_sidebar_state="collapsed" # Hide sidebar by default for immersion
+    initial_sidebar_state="collapsed" 
 )
 
 # --- 2. CSS HACKS ---
@@ -17,7 +16,6 @@ st.markdown("""
         .block-container { padding-top: 0rem; padding-bottom: 0rem; padding-left: 0rem; padding-right: 0rem; }
         header { visibility: hidden; }
         footer { visibility: hidden; }
-        /* Hide sidebar button unless hovered (optional) */
         [data-testid="stSidebarCollapsedControl"] { opacity: 0.2; }
         [data-testid="stSidebarCollapsedControl"]:hover { opacity: 1; }
     </style>
@@ -38,18 +36,16 @@ def load_frontend():
 html_content = load_frontend()
 
 if html_content:
-    # We use height=1000 to ensure the full Vue app is visible
-    # scrolling=False keeps it feeling like a native app, not a webpage inside a webpage
-    components.html(html_content, height=100vh, scrolling=True)
+    # FIXED LINE BELOW: Changed '100vh' to 1200 (pixels)
+    components.html(html_content, height=1200, scrolling=True)
 else:
     st.error("⚠️ `index.html` not found! Please ensure both files are in the repository.")
 
-# --- 5. ADMIN SIDEBAR (OPTIONAL) ---
-# This proves that Python is still running behind the scenes
+# --- 5. ADMIN SIDEBAR ---
 with st.sidebar:
     st.title("🎛 Backend Monitor")
     st.success("Frontend Loaded Successfully")
-    st.info("The Vue.js app is currently handling the user flow. In a production environment, we would use an API Gateway to send the final JSON here.")
+    st.info("The Vue.js app is currently handling the user flow.")
     
     st.markdown("### Active Models")
     st.code("Vision: Gemini 2.5 Flash\nAudio: ACRCloud Fingerprint\nLogic: Pydantic Validation", language="yaml")
