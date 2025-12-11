@@ -241,23 +241,30 @@ else:
             st.session_state.step = "cover"
             st.rerun()
 
-    # --- STEP: COVER ART ---
+    # --- STEP: COVER ART (FIXED) ---
     elif st.session_state.step == "cover":
         uploaded_file = st.file_uploader("Upload Art (3000x3000px)", type=['jpg', 'png'])
         if uploaded_file:
             st.session_state.cover_image = uploaded_file
             st.image(uploaded_file, width=250, caption="Preview")
             
+            # 1. State-saving Trigger
             if st.button("Analyze & Upload"):
                 with st.spinner("🔍 Vision Model checking text..."):
-                    time.sleep(1.5)
-                
+                    time.sleep(1.0)
+                st.session_state.cover_analyzed = True
+                st.rerun() # Force refresh to show the next part
+            
+            # 2. Persistent Logic (stays visible after reload)
+            if st.session_state.get("cover_analyzed", False):
                 # Simulate "Dirty" Art
                 st.warning("⚠️ Text Detected: 'Listen on Spotify'")
                 st.info("💡 Recommendation: Use AI to remove marketing text.")
                 
                 if st.button("✨ Auto-Fix (AI)"):
                     st.session_state.step = "cover_fix"
+                    # Reset the flag so if we loop back later it's clean
+                    st.session_state.cover_analyzed = False
                     st.rerun()
 
     # --- STEP: COVER FIX ---
@@ -271,21 +278,25 @@ else:
             st.session_state.step = "audio"
             st.rerun()
 
-    # --- STEP: AUDIO ---
+    # --- STEP: AUDIO (FIXED) ---
     elif st.session_state.step == "audio":
         audio = st.file_uploader("Upload WAV/MP3", type=['wav', 'mp3'])
         if audio:
+            
+            # 1. State-saving Trigger
             if st.button("Process Audio"):
-                # FIXED: Using 'error' state instead of 'warning' which caused the crash
-                status = st.status("🎧 Processing Audio...", expanded=True)
-                status.write("Checking format...")
-                time.sleep(1)
-                status.write("Running ACR (Copyright)...")
-                time.sleep(1)
+                with st.status("🎧 Processing Audio...", expanded=True) as status:
+                    status.write("Checking format...")
+                    time.sleep(1)
+                    status.write("Running ACR (Copyright)...")
+                    time.sleep(1)
+                    status.update(label="⚠️ Copyright Match Found", state="error")
                 
-                # Flagged Simulation
-                status.update(label="⚠️ Copyright Match Found", state="error")
-                
+                st.session_state.audio_processed = True # Save state
+                st.rerun()
+
+            # 2. Persistent Logic
+            if st.session_state.get("audio_processed", False):
                 st.error("ACR Match: 'Shape of You' detected.")
                 st.write("Is this a cover?")
                 
@@ -294,12 +305,15 @@ else:
                     st.session_state.user_data["Type"] = "Cover"
                     add_message("assistant", "Marked as Cover. Any contributors?", source="ACR Cloud API", model="Audio Fingerprinting")
                     st.session_state.step = "contributors"
+                    st.session_state.audio_processed = False # Reset
                     st.rerun()
+                
                 if c2.button("No, Original"):
-                     st.session_state.user_data["Type"] = "Original"
-                     add_message("assistant", "Marked as Original. Any contributors?", source="User Input", model="N/A")
-                     st.session_state.step = "contributors"
-                     st.rerun()
+                      st.session_state.user_data["Type"] = "Original"
+                      add_message("assistant", "Marked as Original. Any contributors?", source="User Input", model="N/A")
+                      st.session_state.step = "contributors"
+                      st.session_state.audio_processed = False # Reset
+                      st.rerun()
 
     # --- STEP: CONTRIBUTORS ---
     elif st.session_state.step == "contributors":
