@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Metadata Tool</title>
+    <style>
+        /* Simple styling to show the 'locked' state visually */
+        .locked-state {
+            opacity: 0.5;
+            pointer-events: none;
+            background-color: #eee;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Distro Helper</h1>
+
+    <div id="cover-section">
+        <h3>Step 1: Upload Cover Art</h3>
+        <input type="file" id="cover-art-upload" accept="image/png, image/jpeg">
+        <p><small>Upload art to unlock the metadata fields below.</small></p>
+    </div>
+
+    <hr>
+
+    <div id="metadata-section">
+        <h3>Step 2: Metadata</h3>
+        <input type="text" class="metadata-field locked-state" placeholder="Artist Name" disabled>
+        <br><br>
+        <input type="text" class="metadata-field locked-state" placeholder="Track Title" disabled>
+        <br><br>
+        <button id="save-btn" class="metadata-field locked-state" disabled>Process & Save</button>
+    </div>
+
+    <script src="./app.js"></script>
+    <script src="./CoverArtWizard.js"></script>
+</body>
+</html>
