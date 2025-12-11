@@ -1,118 +1,121 @@
 import streamlit as st
 import time
+import re
 
-# --- 1. CONFIGURATION ---
-st.set_page_config(page_title="BandLab Distribution Agent", page_icon="🎸", layout="wide")
+# --- 1. CONFIGURATION & PROFESSIONAL STYLING ---
+st.set_page_config(page_title="DistroBot Pro", page_icon="💿", layout="wide")
 
-# --- 2. BANDLAB BRANDING & CUSTOM CSS (The "Index.html" styling) ---
 st.markdown("""
 <style>
-    /* BANDLAB COLOR PALETTE: #F50000 (Red), #1A1A1A (Dark BG), #FFFFFF (Text) */
+    /* --- GLOBAL THEME: Clean, Professional, 'Spotify for Artists' Vibe --- */
     
-    /* Main Background */
+    /* Main Background & Text */
     .stApp {
-        background-color: #121212;
-        color: white;
+        background-color: #FAFAFA; /* Soft White */
+        color: #1a1a1a;
     }
 
-    /* Chat Messages */
+    /* Chat Bubbles */
     .stChatMessage {
-        background-color: #1E1E1E;
-        border: 1px solid #333;
+        background-color: #FFFFFF;
+        border: 1px solid #E0E0E0;
         border-radius: 12px;
-    }
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) {
-        background-color: #262626; /* Slightly lighter for contrast */
-    }
-
-    /* Input Fields */
-    .stTextInput > div > div > input {
-        background-color: #333;
-        color: white;
-        border: 1px solid #555;
-        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+        padding: 15px;
+        margin-bottom: 12px;
     }
     
-    /* Buttons (The BandLab Red) */
-    .stButton > button {
-        background-color: #F50000;
-        color: white;
-        border: none;
-        border-radius: 20px;
-        padding: 10px 24px;
-        font-weight: bold;
-        transition: all 0.3s;
-    }
-    .stButton > button:hover {
-        background-color: #CC0000;
-        color: white;
-        box-shadow: 0 4px 12px rgba(245, 0, 0, 0.4);
+    /* User Message Difference */
+    div[data-testid="stChatMessage"]:nth-child(odd) {
+        background-color: #F4F7F9; /* Very subtle blue-grey for user */
     }
 
-    /* Sidebar Styling */
+    /* INPUT FIELD: Floating & Clean */
+    .stTextInput > div > div > input {
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        padding: 10px;
+    }
+
+    /* SIDEBAR: The "Live Preview" Pane */
     section[data-testid="stSidebar"] {
-        background-color: #000000;
-        border-right: 1px solid #333;
+        background-color: #FFFFFF;
+        border-right: 1px solid #EAEAEA;
     }
 
-    /* Custom Release Card (The "Preview") */
-    .release-card {
-        background: linear-gradient(145deg, #1e1e1e, #141414);
-        border: 1px solid #333;
+    /* --- CUSTOM UI COMPONENTS --- */
+
+    /* 1. The Live Release Card (HTML/CSS) */
+    .preview-card {
+        border: 1px solid #eee;
         border-radius: 16px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        overflow: hidden;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        background: white;
         margin-bottom: 20px;
     }
-    .release-art-placeholder {
+    .preview-img {
         width: 100%;
-        aspect-ratio: 1/1;
-        background-color: #333;
-        border-radius: 8px;
+        height: 250px;
+        background-color: #f0f0f0;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #666;
-        margin-bottom: 15px;
-        border: 2px dashed #444;
-    }
-    .release-title { font-size: 1.2em; font-weight: bold; color: white; margin-bottom: 5px; }
-    .release-artist { font-size: 0.9em; color: #F50000; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-    .release-meta { font-size: 0.75em; color: #888; margin-top: 10px; }
-    
-    /* Tech Badges */
-    .tech-badge {
-        font-size: 0.6em;
-        background: #333;
         color: #aaa;
-        padding: 2px 6px;
-        border-radius: 4px;
-        border: 1px solid #444;
-        display: inline-block;
-        margin-top: 5px;
-        font-family: monospace;
+        font-size: 0.9em;
+        background-size: cover;
+        background-position: center;
     }
-    .badge-highlight { border-color: #F50000; color: #fff; }
+    .preview-content { padding: 15px; }
+    .preview-title { font-weight: 700; font-size: 1.1em; color: #111; margin-bottom: 4px; }
+    .preview-artist { font-size: 0.9em; color: #555; }
+    .preview-badge { 
+        display: inline-block; font-size: 0.7em; padding: 2px 8px; 
+        border-radius: 10px; background: #eee; color: #666; margin-top: 10px; 
+    }
+
+    /* 2. Tech Badges (The "Brain" Indicators) */
+    .logic-badge {
+        font-family: 'SF Mono', 'Courier New', monospace;
+        font-size: 0.7em;
+        font-weight: 600;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background-color: #e3f2fd; 
+        color: #1565c0;
+        border: 1px solid #bbdefb;
+        display: inline-block;
+        margin-top: 8px;
+    }
+    .badge-alert { background-color: #ffebee; color: #c62828; border-color: #ffcdd2; }
+    .badge-success { background-color: #e8f5e9; color: #2e7d32; border-color: #c8e6c9; }
 
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. SESSION STATE ---
+# --- 2. SESSION STATE & DATA STRUCTURE ---
+
 def init_state():
+    # Define the defaults for a robust session
     defaults = {
-        "messages": [
-            {"role": "assistant", "content": "🎸 **Hey Creator.** I'm the BandLab Distribution Agent.\n\nLet's get your music on Spotify. What is the **Title** of your new track?", "badge": "System"}
+        "history": [
+            {
+                "role": "assistant", 
+                "content": "👋 **Hello.** I am your Distribution Agent.\n\nI ensure your metadata meets DSP (Spotify/Apple) standards to prevent rejection.\n\nLet's start. What is the **Release Title**?",
+                "badge": "System Ready",
+                "type": "info"
+            }
         ],
-        "stage": "GET_TITLE",
-        "data": {
-            "title": "Untitled Track",
-            "artist": "Unknown Artist",
+        "step": "TITLE", # TITLE, ARTIST, COVER, COVER_FIX, AUDIO, REVIEW
+        "payload": {
+            "title": "",
+            "artist": "",
             "version": "Original",
-            "type": "Single",
-            "cover_status": "Pending",
-            "audio_status": "Pending"
-        }
+            "is_cover": False,
+            "explicit": False
+        },
+        "temp_cover": None,
+        "flags": [] # To store warnings
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -120,131 +123,208 @@ def init_state():
 
 init_state()
 
-# --- 4. BACKEND LOGIC (The Brain) ---
-def agent_reply(text, badge=None):
-    st.session_state.messages.append({"role": "assistant", "content": text, "badge": badge})
+# --- 3. THE LOGIC BRAIN (Complex Rules Engine) ---
 
-def handle_input(user_val, input_type="text"):
-    stage = st.session_state.stage
+def add_msg(role, text, badge=None, badge_type="normal"):
+    """Helper to append messages to history"""
+    st.session_state.history.append({
+        "role": role, 
+        "content": text, 
+        "badge": badge,
+        "type": badge_type
+    })
+
+def process_logic(user_input, input_type="text"):
+    """
+    The Core 'Agent' Function. 
+    It mimics a backend API processing requests and updating state.
+    """
+    step = st.session_state.step
+    payload = st.session_state.payload
     
-    # 1. TITLE
-    if stage == "GET_TITLE":
-        st.session_state.messages.append({"role": "user", "content": user_val})
-        st.session_state.data["title"] = user_val
-        agent_reply(f"Nice. **{user_val}** is a solid title.\n\nWho is the **Primary Artist**?", "Logic")
-        st.session_state.stage = "GET_ARTIST"
+    # --- LOGIC: TITLE HANDLING ---
+    if step == "TITLE":
+        # 1. Capture User Input
+        add_msg("user", user_input)
         
-    # 2. ARTIST
-    elif stage == "GET_ARTIST":
-        st.session_state.messages.append({"role": "user", "content": user_val})
-        st.session_state.data["artist"] = user_val
-        agent_reply("Got it. Now, upload your **Cover Art**.", "Logic")
-        st.session_state.stage = "UPLOAD_COVER"
-        
-    # 3. COVER ART
-    elif stage == "UPLOAD_COVER":
-        # Simulating file processing
-        st.session_state.data["cover_status"] = "Uploaded"
-        with st.spinner("🤖 Vision AI Checking for offensive content..."):
-            time.sleep(1.5)
+        # 2. Run Guardrails (The "Basic Logic" Fix)
+        # Check for "Feat." in title (DSP Violation)
+        if re.search(r"(?i)\bfeat\.?|\bft\.?", user_input):
+            clean_title = re.sub(r"(?i)\s*\(?(feat\.?|ft\.?).*?\)?", "", user_input).strip()
+            payload['title'] = clean_title
             
-        agent_reply("✅ **Artwork Approved.** No text or guidelines violations found.\n\nNow, upload your **Master Audio** (WAV).", "Gemini Vision")
-        st.session_state.stage = "UPLOAD_AUDIO"
+            warn_msg = f"I detected feature artist info in the title ('{user_input}').\n\n**Protocol:** Feature artists must be listed in a separate field, not the title. I have cleaned it to: **{clean_title}**."
+            add_msg("assistant", warn_msg, "Metadata Guardrail | Regex Cleaner", "alert")
+        else:
+            payload['title'] = user_input
+            add_msg("assistant", f"Title set: **{payload['title']}**.", "Logic Engine", "success")
+
+        # 3. Move Next
+        add_msg("assistant", "Who is the **Primary Artist**?", "Flow Control")
+        st.session_state.step = "ARTIST"
+
+    # --- LOGIC: ARTIST HANDLING ---
+    elif step == "ARTIST":
+        add_msg("user", user_input)
+        payload['artist'] = user_input
         
-    # 4. AUDIO
-    elif stage == "UPLOAD_AUDIO":
-        st.session_state.data["audio_status"] = "Uploaded"
-        with st.spinner("🎧 Scanning audio fingerprint..."):
+        add_msg("assistant", "Artist logged. Now, please upload the **Cover Art**.", "Asset Manager")
+        st.session_state.step = "COVER"
+
+    # --- LOGIC: COVER ART ANALYSIS (Vision AI) ---
+    elif step == "COVER":
+        # Input is file
+        add_msg("user", "📁 Image Uploaded")
+        st.session_state.temp_cover = user_input # In real app, save S3 URL
+        
+        # Simulate Vision API
+        with st.spinner("🧠 Vision Model analyzing for Text & Guidelines..."):
+            time.sleep(1.5)
+        
+        # Hardcoded logic for demo: We pretend we found text
+        found_issue = True 
+        
+        if found_issue:
+            msg = "⚠️ **Issue Detected:** The Vision model found text: *'Listen Now on Spotify'*.\n\nDSPs reject artwork with marketing text. I can use Generative Fill to remove it."
+            add_msg("assistant", msg, "Google Gemini Vision | OCR", "alert")
+            st.session_state.step = "COVER_FIX"
+        else:
+            st.session_state.step = "AUDIO"
+
+    # --- LOGIC: COVER FIX (Gen AI) ---
+    elif step == "COVER_FIX":
+        if user_input == "FIX":
+            add_msg("user", "✨ Fix it automatically")
+            with st.spinner("🎨 Generative In-painting..."):
+                time.sleep(2)
+            add_msg("assistant", "Cleaned artwork generated. Proceeding to Audio.", "Stable Diffusion | In-painting", "success")
+        else:
+            add_msg("user", "Keep original (I will risk rejection)")
+            add_msg("assistant", "Noted. Flagged as 'High Risk'.")
+            
+        st.session_state.step = "AUDIO"
+        add_msg("assistant", "Please upload the **Master Audio** (WAV).", "Asset Manager")
+
+    # --- LOGIC: AUDIO FINGERPRINTING ---
+    elif step == "AUDIO":
+        add_msg("user", "🎵 Audio Uploaded")
+        
+        with st.spinner("🎧 ACR Cloud Fingerprinting..."):
             time.sleep(2)
             
-        agent_reply("⚠️ **Wait.** ACR Cloud detected a match for *'Sample_01.wav'*.\n\nIs this loop cleared or is this a **Cover Song**?", "ACR Cloud")
-        st.session_state.stage = "CHECK_RIGHTS"
-        
-    # 5. RIGHTS
-    elif stage == "CHECK_RIGHTS":
-        if user_val == "Cover":
-            st.session_state.messages.append({"role": "user", "content": "It is a Cover Song"})
-            st.session_state.data["type"] = "Cover"
-            agent_reply("Understood. We will flag this for Mechanical Licensing.\n\n**Release Ready.** Check the preview card.", "Legal Engine")
+        # Mock Copyright Match
+        msg = "⚠️ **Copyright Match:** Audio matches *'Shape of You' (Ed Sheeran)*.\n\nIs this a **Cover Song** or an **Original**?"
+        add_msg("assistant", msg, "ACR Cloud | Content ID", "alert")
+        st.session_state.step = "RIGHTS"
+
+    # --- LOGIC: RIGHTS & FINISH ---
+    elif step == "RIGHTS":
+        if user_input == "Cover":
+            payload['is_cover'] = True
+            add_msg("user", "It's a Cover")
+            add_msg("assistant", "Marked as Cover. We will secure the Mechanical License via Harry Fox Agency.", "Legal Logic", "success")
         else:
-            st.session_state.messages.append({"role": "user", "content": "Samples are cleared"})
-            st.session_state.data["type"] = "Original"
-            agent_reply("Perfect. Marking as Original Composition.\n\n**Release Ready.** Check the preview card.", "Legal Engine")
+            payload['is_cover'] = False
+            add_msg("user", "It's Original")
+            add_msg("assistant", "Marked as Original.", "Legal Logic")
             
-        st.session_state.stage = "FINISHED"
+        st.session_state.step = "DONE"
+        add_msg("assistant", "🎉 **Release Ready.** Review the final data in the sidebar.", "System", "success")
 
-# --- 5. SIDEBAR: THE LIVE PREVIEW (Replacing Index.html) ---
+
+# --- 4. UI: SIDEBAR PREVIEW (The "Live Connection") ---
+
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=150)
-    st.markdown("### 📀 Release Preview")
-    st.caption("This updates live as you chat.")
+    st.title("🎛 Control Center")
+    st.markdown("---")
     
-    # DYNAMIC HTML CARD
-    d = st.session_state.data
+    # LIVE PREVIEW CARD
+    p = st.session_state.payload
     
-    # Determine Cover Art Display
-    cover_html = '<div class="release-art-placeholder"><span>No Art</span></div>'
-    if d["cover_status"] == "Uploaded":
-        # Using a placeholder image for demo, in real app use base64 of uploaded file
-        cover_html = f'<img src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=1000&auto=format&fit=crop" style="width:100%; border-radius:8px; margin-bottom:15px;">'
-
-    st.markdown(f"""
-    <div class="release-card">
-        {cover_html}
-        <div class="release-title">{d['title']}</div>
-        <div class="release-artist">{d['artist']}</div>
-        <div class="release-meta">
-            {d['version']} • {d['type']} <br>
-            Audio: {d['audio_status']}
+    # Determine Image URL
+    if st.session_state.temp_cover:
+        # Just a placeholder for the demo since we can't easily display raw bytes object in HTML string without processing
+        img_url = "https://images.unsplash.com/photo-1619983081563-430f63602796?q=80&w=1000&auto=format&fit=crop"
+    else:
+        img_url = "" # CSS handles empty state
+        
+    # Render HTML Card
+    card_html = f"""
+    <div class="preview-card">
+        <div class="preview-img" style="background-image: url('{img_url}');">
+            {'' if img_url else 'Pending Art'}
+        </div>
+        <div class="preview-content">
+            <div class="preview-title">{p['title'] or "Untitled Release"}</div>
+            <div class="preview-artist">{p['artist'] or "Unknown Artist"}</div>
+            <span class="preview-badge">{'Cover Song' if p['is_cover'] else 'Original'}</span>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown("### 👁‍🗨 Live Preview")
+    st.markdown(card_html, unsafe_allow_html=True)
     
-    if st.session_state.stage == "FINISHED":
-        st.success("✨ Ready for Distribution")
-        st.button("🚀 Distribute to Spotify")
-    
-    st.divider()
-    if st.button("Start Over"):
+    # RAW DATA VIEW
+    with st.expander("🛠 Raw JSON Payload"):
+        st.json(st.session_state.payload)
+        
+    st.markdown("---")
+    if st.button("Reset Session"):
         st.session_state.clear()
         st.rerun()
 
-# --- 6. MAIN CHAT INTERFACE ---
+# --- 5. UI: MAIN CHAT INTERFACE ---
 
-st.title("Distribution Assistant")
+st.title("Distribution Agent")
 
 # Render History
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
-        if msg.get("badge"):
-            hl = "badge-highlight" if "Vision" in msg["badge"] or "Cloud" in msg["badge"] else ""
-            st.markdown(f"<span class='tech-badge {hl}'>{msg['badge']}</span>", unsafe_allow_html=True)
-
-# Dynamic Input Zone
-st.markdown("---")
-stage = st.session_state.stage
-
-if stage in ["GET_TITLE", "GET_ARTIST"]:
-    txt = st.chat_input("Type here...")
-    if txt: handle_input(txt)
-
-elif stage == "UPLOAD_COVER":
-    with st.chat_message("assistant"):
-        st.write("Waiting for JPG/PNG...")
-        f = st.file_uploader("Cover Art", type=["jpg", "png"], label_visibility="collapsed")
-        if f: handle_input(f, "file")
-
-elif stage == "UPLOAD_AUDIO":
-    with st.chat_message("assistant"):
-        st.write("Waiting for WAV...")
-        f = st.file_uploader("Master Audio", type=["wav"], label_visibility="collapsed")
-        if f: handle_input(f, "file")
+for msg in st.session_state.history:
+    with st.chat_message(msg['role']):
+        st.markdown(msg['content'])
         
-elif stage == "CHECK_RIGHTS":
+        # Render Badge if exists
+        if msg.get('badge'):
+            b_type = "badge-alert" if msg['type'] == 'alert' else "badge-success" if msg['type'] == 'success' else ""
+            st.markdown(f"<div class='logic-badge {b_type}'>⚙️ {msg['badge']}</div>", unsafe_allow_html=True)
+
+# --- 6. DYNAMIC INPUT ZONES ---
+
+st.markdown("---")
+current_step = st.session_state.step
+
+# A. TEXT INPUTS
+if current_step in ["TITLE", "ARTIST"]:
+    val = st.chat_input(f"Enter {current_step.title()}...")
+    if val:
+        process_logic(val)
+
+# B. FILE UPLOADS
+elif current_step == "COVER":
+    with st.chat_message("assistant"):
+        st.write("waiting for file...")
+        f = st.file_uploader("Upload 3000x3000px JPG", type=['jpg','png'], label_visibility="collapsed")
+        if f: process_logic(f, "file")
+
+elif current_step == "AUDIO":
+    with st.chat_message("assistant"):
+        st.write("waiting for file...")
+        f = st.file_uploader("Upload WAV/MP3", type=['wav','mp3'], label_visibility="collapsed")
+        if f: process_logic(f, "file")
+
+# C. BUTTON DECISIONS
+elif current_step == "COVER_FIX":
     col1, col2 = st.columns(2)
-    if col1.button("It's a Cover"): handle_input("Cover", "btn")
-    if col2.button("Samples Cleared"): handle_input("Original", "btn")
-    
-elif stage == "FINISHED":
+    if col1.button("✨ Auto-Fix (Gen AI)", use_container_width=True):
+        process_logic("FIX", "btn")
+    if col2.button("Keep As Is", use_container_width=True):
+        process_logic("SKIP", "btn")
+
+elif current_step == "RIGHTS":
+    col1, col2 = st.columns(2)
+    if col1.button("This is a Cover", use_container_width=True):
+        process_logic("Cover", "btn")
+    if col2.button("This is Original", use_container_width=True):
+        process_logic("Original", "btn")
+
+elif current_step == "DONE":
     st.balloons()
