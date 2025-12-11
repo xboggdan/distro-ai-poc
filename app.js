@@ -1,11 +1,16 @@
-// Inside App.js
-import CoverArtWizard from './components/CoverArtWizard';
+// --- OLD (Delete this) ---
+// import CoverArtWizard from './components/CoverArtWizard';
+
+// --- NEW (Use this) ---
+import CoverArtWizard from './CoverArtWizard'; // <--- Note: No "/components/"
 
 function App() {
   return (
     <div className="App">
-      <h1>My Cover Art Tool</h1>
+      <h1 style={{ textAlign: 'center' }}>My Cover Art Tool</h1>
       <CoverArtWizard />
     </div>
   );
 }
+
+export default App;
