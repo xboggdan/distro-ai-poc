@@ -1,13 +1,13 @@
 import streamlit as st
 import time
-import re
+import uuid
 
-# --- 1. CONFIGURATION & BANDLAB STYLING ---
+# --- 1. CONFIGURATION & STYLING ---
 st.set_page_config(page_title="BandLab DistroBot", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
-    /* BANDLAB THEME: Clean White, Dark Text, Red Accents */
+    /* BANDLAB BRANDING */
     .stApp { background-color: #ffffff; color: #222; }
     
     /* Chat Bubbles */
@@ -16,14 +16,9 @@ st.markdown("""
         border: 1px solid #e9ecef;
         border-radius: 12px;
         padding: 15px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
-    .stChatMessage[data-testid="stChatMessage"]:nth-child(odd) {
-        background-color: #fff;
-        border-color: #eee;
-    }
-
-    /* Primary Button (BandLab Red) */
+    
+    /* Primary Button (Red) */
     .stButton > button {
         background-color: #F50000;
         color: white;
@@ -31,79 +26,84 @@ st.markdown("""
         border: none;
         padding: 8px 24px;
         font-weight: 600;
-        transition: 0.3s;
     }
-    .stButton > button:hover { background-color: #c90000; color: white; }
+    .stButton > button:hover { background-color: #d10000; color: white; }
 
-    /* Secondary/Ghost Button */
-    .secondary-btn {
+    /* Secondary Button (Gray/Ghost) */
+    div[data-testid="column"] > div > div > div > button.secondary {
         background-color: transparent;
-        border: 1px solid #ddd;
         color: #333;
+        border: 1px solid #ccc;
     }
 
-    /* Review Card Styling */
-    .review-section {
-        border-bottom: 1px solid #eee;
-        padding: 10px 0;
+    /* Review Card */
+    .review-card {
+        border: 1px solid #eee;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
-    .review-label { font-size: 0.8em; color: #666; text-transform: uppercase; }
-    .review-val { font-weight: 600; font-size: 1.0em; color: #000; }
+    .review-row {
+        display: flex; justify-content: space-between;
+        padding: 8px 0; border-bottom: 1px solid #f0f0f0;
+    }
+    .review-label { color: #666; font-size: 0.9em; }
+    .review-val { font-weight: 600; }
     
     /* Education Box */
     .edu-box {
-        background-color: #FFF3E0;
-        border-left: 4px solid #FF9800;
-        padding: 15px;
-        margin-bottom: 15px;
-        border-radius: 4px;
-        font-size: 0.9em;
+        background-color: #fff3e0;
+        border-left: 4px solid #ff9800;
+        padding: 15px; margin-bottom: 15px; font-size: 0.9em;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. DATA MODEL & STATE ---
+# --- 2. DATA LISTS (FROM SCREENSHOTS) ---
+GENRES = ["Pop", "Hip Hop", "Rock", "R&B", "Electronic", "Children's Music", "Country", "Alternative"]
+INSTRUMENTS = ["Vocals", "Guitar", "Bass", "Drums", "Keys", "Banjo", "Violin", "Synth", "Other"]
+PROD_ROLES = ["Producer", "Recording Engineer", "Mixing Engineer", "Mastering Engineer", "Assistant Engineer"]
+LANGUAGES = ["English", "Spanish", "French", "German", "Instrumental"]
+
+# --- 3. STATE MANAGEMENT ---
 
 def init_state():
     defaults = {
         "history": [{
             "role": "assistant", 
-            "content": "🔥 **Welcome to BandLab Distribution.**\n\nI will guide you through the 4-step process to get your music on Spotify & Apple Music.\n\n**Step 1: Release Details**\nLet's start. What is the **Release Title** (Album/Single name)?",
-            "type": "init"
+            "content": "🔥 **Let's Build Your Release.**\n\nI'll guide you step-by-step. I've detected your Main Artist profile is **xboggdan**.\n\n**Step 1:** What is the **Release Title**?"
         }],
-        "step": "S1_TITLE", # State Machine Tracker
-        "edu_mode": False,  # Education Toggle
-        "editing": False,   # Flag for "Review & Edit" mode
-        # --- THE FULL PAYLOAD (Mapped from Screenshots) ---
+        "step": "S1_TITLE", 
+        "edu_mode": False,
+        "edit_return_mode": False, # If True, jumps back to Review after 1 input
+        
+        # TEMP HOLDERS FOR COMPLEX INPUTS
+        "temp_name": "", 
+        "temp_role": "",
+        
+        # THE DATA PAYLOAD
         "data": {
-            # STEP 1: Release Info
+            "main_artist": "xboggdan",
             "release_title": "",
-            "release_version": "",
-            "main_artist": "xboggdan", # Pre-filled from profile (simulated)
+            "version": "",
             "genre": "",
-            "upc": "", # Optional
-            "release_date_mode": "ASAP", # ASAP or Specific
-            "release_date": None,
-            "label": "", # Optional
+            "upc": "",
+            "release_date": "ASAP",
+            "label": "",
             
-            # STEP 2: Track Details
-            "track_title": "",
-            "track_version": "",
+            # Complex Arrays
             "composers": [], # List of names
-            "artists": [],   # List of dicts {name, role}
-            "performers": [],
-            "producers": [],
-            "contributors": [],
-            "released_before": False,
-            "lyrics_type": "Instrumental", # Instrumental / English / etc
+            "performers": [], # List of {name, instrument}
+            "production": [], # List of {name, role}
+            "lyricists": [], # List of names
+            
+            "lyrics_lang": "English",
             "explicit": "Clean",
-            "lyricists": [],
             "isrc": "",
             "publisher": "",
-            "audio_file": None,
-            
-            # STEP 3: Assets
-            "cover_art": None
+            "audio": None,
+            "cover": None
         }
     }
     for k, v in defaults.items():
@@ -112,329 +112,328 @@ def init_state():
 
 init_state()
 
-# --- 3. KNOWLEDGE BASE (For Education Toggle) ---
+# --- 4. EDUCATION CONTENT ---
 KB = {
-    "UPC": "Universal Product Code. It identifies the product (album/single). If you don't have one, BandLab generates it for free.",
-    "ISRC": "International Standard Recording Code. It identifies the specific recording. Essential for tracking royalties.",
-    "Composers": "Legal names are required here (e.g., 'John Smith', not 'Lil J'). This ensures the actual songwriter gets paid publishing royalties.",
-    "Explicit": "You must mark 'Explicit' if there is strong language, violence, or drug references. Failure to do so can get your release hidden by parental controls.",
-    "Cover Art": "Must be 3000x3000px. No URLs, social handles, or blurry images. DSPs are very strict about this.",
-    "Label": "If you are independent, you can use your artist name or a custom label name here. e.g., 'Dreamwave Records'."
+    "UPC": "Universal Product Code. Identifies the album/single product.",
+    "Composers": "Requires **Legal First & Last Name** (e.g., 'John Smith', not 'J-Dawg') for royalty collection.",
+    "Performers": "Anyone who played an instrument or sang on the track.",
+    "Lyricists": "Required for any song that isn't Instrumental.",
+    "Explicit": "Must be marked if the song contains profanity or references to violence/drugs.",
+    "ISRC": "International Standard Recording Code. Identifies the specific audio recording."
 }
 
-# --- 4. LOGIC ENGINE ---
+# --- 5. LOGIC HANDLERS (CALLBACKS) ---
 
 def add_msg(role, text):
     st.session_state.history.append({"role": role, "content": text})
 
-def get_next_step(current):
-    # This defines the linear flow
-    flow = [
-        "S1_TITLE", "S1_VERSION", "S1_GENRE", "S1_DATE", "S1_LABEL", "S1_UPC",
-        "S2_TITLE", "S2_VERSION", "S2_COMPOSERS", "S2_ARTISTS", "S2_PERFORMERS", 
-        "S2_PRODUCERS", "S2_CONTRIB", "S2_BEFORE", "S2_LYRICS_TYPE", 
-        "S2_LYRICISTS", "S2_EXPLICIT", "S2_ISRC", "S2_PUBLISHER", "S2_AUDIO",
-        "S3_COVER", "S4_REVIEW", "SUBMITTED"
-    ]
-    try:
-        idx = flow.index(current)
-        return flow[idx+1]
-    except:
-        return "S4_REVIEW"
+def next_step(step_id, bot_msg):
+    # If we were editing, go back to review
+    if st.session_state.edit_return_mode:
+        st.session_state.edit_return_mode = False
+        st.session_state.step = "REVIEW"
+        add_msg("assistant", "✅ Updated. Returning to Review.")
+    else:
+        st.session_state.step = step_id
+        add_msg("assistant", bot_msg)
 
-def process_input(user_input, input_type="text"):
-    """
-    The Core Brain. Updates state, validates data, and determines the next question.
-    """
-    step = st.session_state.step
-    data = st.session_state.data
-    
-    # 1. HANDLE EDIT MODE (Jump back to Review after 1 change)
-    if st.session_state.editing:
-        # Save specific field based on step
-        if step == "S1_TITLE": data["release_title"] = user_input
-        elif step == "S1_GENRE": data["genre"] = user_input
-        # ... (Add mapping for all fields)
-        
-        st.session_state.editing = False
-        st.session_state.step = "S4_REVIEW"
-        add_msg("assistant", "✅ Updated. Returning to review.")
+# --- INPUT PROCESSING FUNCTIONS ---
+
+def handle_text(key_name, next_s, prompt):
+    val = st.session_state.user_input
+    if val:
+        st.session_state.data[key_name] = val
+        add_msg("user", val)
+        next_step(next_s, prompt)
+
+def handle_btn(val, key_name, next_s, prompt):
+    if key_name: st.session_state.data[key_name] = val
+    add_msg("user", str(val))
+    next_step(next_s, prompt)
+
+# --- COMPLEX LOGIC HANDLERS (The "Smart" Parts) ---
+
+def add_composer_smart(is_me):
+    d = st.session_state.data
+    if is_me:
+        # User clicked "Yes, it's me"
+        # In real app, we'd pull legal name from profile. Here we simulate or ask.
+        add_msg("user", "Yes, I am the composer")
+        add_msg("assistant", f"Using your profile name (**{d['main_artist']}**). Any other composers?")
+        d['composers'].append(d['main_artist'])
+        st.session_state.step = "S2_COMPOSERS_MORE"
+    else:
+        add_msg("user", "No / Add Another")
+        add_msg("assistant", "Please enter the **Legal First & Last Name** of the composer.")
+        st.session_state.step = "S2_COMPOSERS_INPUT"
+
+def save_composer_input():
+    val = st.session_state.user_input
+    if len(val.split()) < 2:
+        st.toast("⚠️ Legal Name requires First & Last Name")
         return
+    st.session_state.data['composers'].append(val)
+    add_msg("user", val)
+    next_step("S2_COMPOSERS_MORE", f"Added {val}. Any others?")
 
-    # 2. NORMAL FLOW
-    
-    # --- STEP 1: RELEASE ---
+def add_performer_smart(is_me):
+    if is_me:
+        add_msg("user", "Yes, I performed")
+        st.session_state.temp_name = st.session_state.data['main_artist']
+        next_step("S2_PERF_ROLE", f"What instrument did **{st.session_state.temp_name}** play?")
+    else:
+        add_msg("user", "Add Another Person")
+        next_step("S2_PERF_NAME", "Enter the Performer's Name:")
+
+def save_performer_role(role):
+    name = st.session_state.temp_name
+    st.session_state.data['performers'].append({"name": name, "role": role})
+    add_msg("user", role)
+    next_step("S2_PERF_MORE", f"Added {name} on {role}. Anyone else?")
+
+# --- 6. UI RENDERERS ---
+
+def render_sidebar():
+    with st.sidebar:
+        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=150)
+        st.markdown("### 🛠 Options")
+        st.session_state.edu_mode = st.toggle("🎓 Education Mode", value=st.session_state.edu_mode)
+        
+        if st.session_state.edu_mode:
+            st.info("Information about specific fields will appear in the chat.")
+
+        # Progress
+        d = st.session_state.data
+        if d['cover']:
+            st.image(d['cover'], caption="Cover Art", width=200)
+        elif d['release_title']:
+            st.markdown(f"**Draft:** {d['release_title']}")
+
+        if st.button("Start Over"):
+            st.session_state.clear()
+            st.rerun()
+
+def render_history():
+    for msg in st.session_state.history:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+def inject_edu(step_keyword):
+    if st.session_state.edu_mode and step_keyword in KB:
+        st.markdown(f"<div class='edu-box'>🎓 <b>Info:</b> {KB[step_keyword]}</div>", unsafe_allow_html=True)
+
+# --- 7. MAIN INPUT ROUTER ---
+
+def render_inputs():
+    step = st.session_state.step
+    d = st.session_state.data
+
+    # --- STEP 1: RELEASE INFO ---
     if step == "S1_TITLE":
-        data["release_title"] = user_input
-        add_msg("user", user_input)
-        add_msg("assistant", f"Release Title: **{user_input}**. Any specific **Version**? (e.g., Deluxe, Remastered). Type 'None' to skip.")
-        st.session_state.step = "S1_VERSION"
+        st.chat_input("Enter Title...", key="user_input", on_submit=lambda: handle_text("release_title", "S1_VERSION", "Any specific Version? (Type 'None' to skip)"))
 
     elif step == "S1_VERSION":
-        add_msg("user", user_input)
-        if user_input.lower() != "none": data["release_version"] = user_input
-        add_msg("assistant", "Select your **Genre**.")
-        st.session_state.step = "S1_GENRE"
+        st.chat_input("e.g. Deluxe, Remastered...", key="user_input", on_submit=lambda: handle_text("version", "S1_GENRE", "Select the Genre."))
 
     elif step == "S1_GENRE":
-        # Handled by buttons below, but if text:
-        data["genre"] = user_input
-        add_msg("user", user_input)
-        add_msg("assistant", "When should this go live? (ASAP / Specific Date)")
-        st.session_state.step = "S1_DATE"
+        cols = st.columns(4)
+        for i, g in enumerate(GENRES):
+            if cols[i%4].button(g, use_container_width=True):
+                handle_btn(g, "genre", "S1_DATE", "When is the release date?")
 
     elif step == "S1_DATE":
-        add_msg("user", user_input)
-        if "specific" in user_input.lower():
-            add_msg("assistant", "Please enter the date (YYYY-MM-DD).")
-            # Logic would pause here for date, simplifying for demo:
-        data["release_date_mode"] = user_input
-        add_msg("assistant", "Record **Label** name? (Optional - Type 'None' to use default).")
-        st.session_state.step = "S1_LABEL"
-
-    elif step == "S1_LABEL":
-        add_msg("user", user_input)
-        if user_input.lower() != "none": data["label"] = user_input
-        add_msg("assistant", "Do you have a **UPC**? (12/13 digits). Type 'None' if you want us to generate one.")
-        st.session_state.step = "S1_UPC"
+        c1, c2 = st.columns(2)
+        if c1.button("As Soon As Possible", use_container_width=True):
+            handle_btn("ASAP", "release_date", "S1_UPC", "Do you have a UPC? (Type 'None' to generate free)")
+        if c2.button("Specific Date", use_container_width=True):
+             # Simplified for demo
+            handle_btn("Specific", "release_date", "S1_UPC", "Do you have a UPC? (Type 'None' to generate free)")
 
     elif step == "S1_UPC":
-        add_msg("user", user_input)
-        if user_input.lower() != "none":
-            if not user_input.isdigit() or len(user_input) < 12:
-                add_msg("assistant", "⚠️ Invalid UPC. Must be 12-13 digits. Try again or type 'None'.")
-                return # Stop progression
-            data["upc"] = user_input
-        
-        # TRANSITION TO STEP 2
-        add_msg("assistant", "✅ Release details saved.\n\n**Step 2: Track Details**\nWhat is the **Track Title**?")
-        st.session_state.step = "S2_TITLE"
+        inject_edu("UPC")
+        st.chat_input("12-13 digits or 'None'...", key="user_input", on_submit=lambda: handle_text("upc", "S1_LABEL", "Label Name? (Type 'None' for Independent)"))
 
-    # --- STEP 2: TRACK ---
-    elif step == "S2_TITLE":
-        data["track_title"] = user_input
-        add_msg("user", user_input)
-        add_msg("assistant", "Track Version? (e.g., Radio Edit). Type 'None' to skip.")
-        st.session_state.step = "S2_VERSION"
+    elif step == "S1_LABEL":
+        st.chat_input("Label Name...", key="user_input", on_submit=lambda: handle_text("label", "S2_COMPOSERS_START", "Moving to Track Details.\n\n**Composers:** Is **xboggdan** the composer?"))
 
-    elif step == "S2_VERSION":
-        add_msg("user", user_input)
-        if user_input.lower() != "none": data["track_version"] = user_input
-        add_msg("assistant", "Adding **Composers**. Please enter the **Legal First & Last Name** (Required for publishing).")
-        st.session_state.step = "S2_COMPOSERS"
+    # --- STEP 2: TRACK & ROLES (SMART LOGIC) ---
+    
+    # 1. COMPOSERS
+    elif step == "S2_COMPOSERS_START":
+        inject_edu("Composers")
+        c1, c2 = st.columns(2)
+        if c1.button(f"Yes, {d['main_artist']} composed it", use_container_width=True):
+            add_composer_smart(True)
+            st.rerun()
+        if c2.button("No / Someone Else", use_container_width=True):
+            add_composer_smart(False)
+            st.rerun()
 
-    elif step == "S2_COMPOSERS":
-        add_msg("user", user_input)
-        # Validation
-        if len(user_input.split()) < 2:
-            add_msg("assistant", "⚠️ Legal name requires First and Last name (e.g., 'John Doe'). Please try again.")
-            return
-        
-        data["composers"].append(user_input)
-        add_msg("assistant", f"Added {user_input}. Add another? Type 'Next' to move on.")
-        # Logic to stay in loop or move
-        # For demo, assuming user hits "Next" button or types it
-        
-    elif step == "S2_LYRICS_TYPE":
-        # Handled by buttons
-        pass
+    elif step == "S2_COMPOSERS_INPUT":
+        inject_edu("Composers")
+        st.chat_input("Legal First & Last Name...", key="user_input", on_submit=save_composer_input)
 
-    # ... (Skipping repetitive logic for brevity, but map assumes all fields exist) ...
-    # We will jump straight to the tricky logic parts
+    elif step == "S2_COMPOSERS_MORE":
+        c1, c2 = st.columns(2)
+        if c1.button("Add Another Composer", use_container_width=True):
+            next_step("S2_COMPOSERS_INPUT", "Enter the next name.")
+            st.rerun()
+        if c2.button("Done with Composers", use_container_width=True):
+            next_step("S2_PERF_START", f"**Performers:** Did **{d['main_artist']}** perform on this track?")
+            st.rerun()
+
+    # 2. PERFORMERS
+    elif step == "S2_PERF_START":
+        inject_edu("Performers")
+        c1, c2 = st.columns(2)
+        if c1.button(f"Yes, {d['main_artist']} performed", use_container_width=True):
+            add_performer_smart(True)
+            st.rerun()
+        if c2.button("No / Add Others", use_container_width=True):
+            add_performer_smart(False)
+            st.rerun()
+
+    elif step == "S2_PERF_NAME":
+        st.chat_input("Performer Name...", key="user_input", on_submit=lambda: 
+                      (setattr(st.session_state, 'temp_name', st.session_state.user_input), 
+                       add_msg("user", st.session_state.user_input),
+                       next_step("S2_PERF_ROLE", f"What instrument did **{st.session_state.user_input}** play?")))
+
+    elif step == "S2_PERF_ROLE":
+        cols = st.columns(4)
+        for i, inst in enumerate(INSTRUMENTS):
+            if cols[i%4].button(inst, use_container_width=True):
+                save_performer_role(inst)
+                st.rerun()
+
+    elif step == "S2_PERF_MORE":
+        c1, c2 = st.columns(2)
+        if c1.button("Add Another Performer", use_container_width=True):
+            next_step("S2_PERF_NAME", "Enter Name:")
+            st.rerun()
+        if c2.button("Done with Performers", use_container_width=True):
+            next_step("S2_PROD_START", "**Production:** Add producers or engineers?")
+            st.rerun()
+
+    # 3. PRODUCTION (Simplified for demo, similar flow to Perf)
+    elif step == "S2_PROD_START":
+        c1, c2 = st.columns(2)
+        if c1.button("Add Producer/Engineer", use_container_width=True):
+             next_step("S2_PROD_NAME", "Enter Name:")
+             st.rerun()
+        if c2.button("Skip / Done", use_container_width=True):
+             next_step("S2_LYRICS_LANG", "**Lyrics:** What is the language?")
+             st.rerun()
+             
+    elif step == "S2_PROD_NAME":
+        st.chat_input("Name...", key="user_input", on_submit=lambda: 
+                      (setattr(st.session_state, 'temp_name', st.session_state.user_input),
+                       next_step("S2_PROD_ROLE", "Select Role:")))
+                       
+    elif step == "S2_PROD_ROLE":
+        for role in PROD_ROLES:
+            if st.button(role, use_container_width=True):
+                d['production'].append({"name": st.session_state.temp_name, "role": role})
+                next_step("S2_PROD_START", f"Added {st.session_state.temp_name} ({role}). Add another?")
+                st.rerun()
+
+    # 4. LYRICS & EXPLICIT
+    elif step == "S2_LYRICS_LANG":
+        for lang in LANGUAGES:
+            if st.button(lang, use_container_width=True):
+                d['lyrics_lang'] = lang
+                if lang == "Instrumental":
+                    handle_btn(lang, "lyrics_lang", "S2_EXPLICIT", "Instrumental set. Is the content **Explicit**?")
+                else:
+                    handle_btn(lang, "lyrics_lang", "S2_LYRICIST", f"{lang} selected. Who is the **Lyricist**?")
+                st.rerun()
+
+    elif step == "S2_LYRICIST":
+        inject_edu("Lyricists")
+        c1, c2 = st.columns(2)
+        if c1.button(f"{d['main_artist']}", use_container_width=True):
+            d['lyricists'].append(d['main_artist'])
+            next_step("S2_EXPLICIT", "Lyricist added. Is the track **Explicit**?")
+            st.rerun()
+        if c2.button("Someone Else", use_container_width=True):
+            st.session_state.step = "S2_LYRICIST_INPUT"
+            st.rerun()
+            
+    elif step == "S2_LYRICIST_INPUT":
+        st.chat_input("Legal Name...", key="user_input", on_submit=lambda: 
+                      (d['lyricists'].append(st.session_state.user_input),
+                       next_step("S2_EXPLICIT", "Lyricist added. Is the track **Explicit**?")))
+
+    elif step == "S2_EXPLICIT":
+        inject_edu("Explicit")
+        c1, c2 = st.columns(2)
+        if c1.button("Clean / Non-Explicit", use_container_width=True):
+            handle_btn("Clean", "explicit", "S2_ISRC", "Marked Clean. **ISRC**? (Optional)")
+        if c2.button("Explicit (Parental Advisory)", use_container_width=True):
+            handle_btn("Explicit", "explicit", "S2_ISRC", "Marked Explicit. **ISRC**? (Optional)")
 
     elif step == "S2_ISRC":
-        add_msg("user", user_input)
-        if user_input.lower() != "none": data["isrc"] = user_input
-        add_msg("assistant", "Publisher? (Optional).")
-        st.session_state.step = "S2_PUBLISHER"
-
-    elif step == "S2_PUBLISHER":
-        add_msg("user", user_input)
-        if user_input.lower() != "none": data["publisher"] = user_input
-        add_msg("assistant", "Please upload your **Audio File** (WAV/MP3).")
-        st.session_state.step = "S2_AUDIO"
+        inject_edu("ISRC")
+        st.chat_input("Enter ISRC or 'None'...", key="user_input", on_submit=lambda: handle_text("isrc", "S2_AUDIO", "Upload your **Audio File**."))
 
     # --- STEP 3: ASSETS ---
     elif step == "S2_AUDIO":
-        # File handler calls this
-        add_msg("assistant", "🎵 Audio received. Finally, **Step 3**: Upload **Cover Art** (3000x3000px).")
-        st.session_state.step = "S3_COVER"
-    
-    elif step == "S3_COVER":
-         add_msg("assistant", "🖼️ Art received. Generating Review...")
-         st.session_state.step = "S4_REVIEW"
-
-# --- 5. UI COMPONENTS ---
-
-# Sidebar Education Toggle
-with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=150)
-    st.markdown("### 🛠 Tools")
-    st.session_state.edu_mode = st.toggle("🎓 Education Mode", value=False)
-    
-    if st.session_state.edu_mode:
-        st.info("💡 **Education Mode On**\nI will explain what each field means as we go.")
-    
-    st.divider()
-    
-    # Live Preview Card
-    d = st.session_state.data
-    st.markdown("**Live Draft:**")
-    st.markdown(f"""
-    <div style="border:1px solid #ddd; padding:10px; border-radius:8px; text-align:center;">
-        <div style="background:#eee; width:100%; height:150px; margin-bottom:5px; display:flex; align-items:center; justify-content:center;">
-            { '🖼️ Art' if d['cover_art'] else 'Pending Art'}
-        </div>
-        <b>{d['release_title'] or 'Untitled Release'}</b><br>
-        <span style="font-size:0.8em; color:#666;">{d['main_artist']}</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("Reset Draft"):
-        st.session_state.clear()
-        st.rerun()
-
-# --- 6. MAIN CHAT INTERFACE ---
-
-st.title("Build Your Release")
-
-# Display History
-for msg in st.session_state.history:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-# Education Tip Injection
-if st.session_state.edu_mode:
-    # Find keyword match for current step
-    tip_key = None
-    if "UPC" in st.session_state.step: tip_key = "UPC"
-    elif "ISRC" in st.session_state.step: tip_key = "ISRC"
-    elif "COMPOSERS" in st.session_state.step: tip_key = "Composers"
-    elif "COVER" in st.session_state.step: tip_key = "Cover Art"
-    
-    if tip_key:
-        st.markdown(f"""<div class="edu-box">🎓 <b>BandLab Tips:</b> {KB[tip_key]}</div>""", unsafe_allow_html=True)
-
-# --- 7. DYNAMIC INPUT AREAS ---
-
-step = st.session_state.step
-data = st.session_state.data
-
-# A. SPECIAL REVIEW SCREEN (Step 4)
-if step == "S4_REVIEW":
-    st.divider()
-    st.subheader("Review Release Details")
-    st.caption("Click 'Edit' to change any field.")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 💿 Release Info")
-        # Helper to make edit row
-        def edit_row(label, val, step_id):
-            c1, c2 = st.columns([3, 1])
-            c1.markdown(f"<div class='review-section'><div class='review-label'>{label}</div><div class='review-val'>{val or '-'}</div></div>", unsafe_allow_html=True)
-            if c2.button("Edit", key=f"edit_{step_id}"):
-                st.session_state.editing = True
-                st.session_state.step = step_id
-                add_msg("assistant", f"Okay, enter the new **{label}**:")
-                st.rerun()
-
-        edit_row("Release Title", data["release_title"], "S1_TITLE")
-        edit_row("Version", data["release_version"], "S1_VERSION")
-        edit_row("Genre", data["genre"], "S1_GENRE")
-        edit_row("UPC", data["upc"], "S1_UPC")
-        
-    with col2:
-        st.markdown("#### 🎵 Track Info")
-        edit_row("Track Title", data["track_title"], "S2_TITLE")
-        edit_row("Composers", ", ".join(data["composers"]), "S2_COMPOSERS")
-        edit_row("Audio Status", "Uploaded" if data["audio_file"] else "Pending", "S2_AUDIO")
-        edit_row("ISRC", data["isrc"], "S2_ISRC")
-
-    st.markdown("---")
-    if st.button("🚀 SUBMIT RELEASE", use_container_width=True):
-        st.session_state.step = "SUBMITTED"
-        st.balloons()
-        add_msg("assistant", "🎉 **Success!** Your release has been submitted to moderation.")
-        st.rerun()
-
-# B. INPUTS FOR OTHER STEPS
-else:
-    # 1. Selection Grids (Genre, Explicit, etc)
-    if step == "S1_GENRE":
-        genres = ["Pop", "Hip Hop", "Rock", "R&B", "Electronic", "Children's Music", "Other"]
-        cols = st.columns(4)
-        for i, g in enumerate(genres):
-            if cols[i%4].button(g):
-                process_input(g)
-                st.rerun()
-
-    elif step == "S2_LYRICS_TYPE":
-        c1, c2, c3 = st.columns(3)
-        if c1.button("Instrumental"):
-            data["lyrics_type"] = "Instrumental"
-            data["lyricists"] = [] # Clear lyricists
-            add_msg("user", "Instrumental")
-            add_msg("assistant", "Instrumental track. Skipping lyricist fields. **Explicit Content?**")
-            st.session_state.step = "S2_EXPLICIT"
-            st.rerun()
-        if c2.button("English"):
-            data["lyrics_type"] = "English"
-            add_msg("user", "English")
-            add_msg("assistant", "Got it. Who are the **Lyricists**? (Legal Name).")
-            st.session_state.step = "S2_LYRICISTS"
-            st.rerun()
-
-    elif step == "S2_EXPLICIT":
-        c1, c2, c3 = st.columns(3)
-        if c1.button("Clean"): 
-            data["explicit"] = "Clean"
-            add_msg("user", "Clean")
-            add_msg("assistant", "Marked Clean. **ISRC**? (Optional)")
-            st.session_state.step = "S2_ISRC"
-            st.rerun()
-        if c2.button("Explicit"):
-             data["explicit"] = "Explicit"
-             add_msg("user", "Explicit")
-             add_msg("assistant", "Marked Explicit. **ISRC**? (Optional)")
-             st.session_state.step = "S2_ISRC"
-             st.rerun()
-
-    # 2. Loop Handlers (Composers)
-    elif step == "S2_COMPOSERS":
-        with st.form("comp_form"):
-            val = st.text_input("Composer Name")
-            c1, c2 = st.columns(2)
-            if c1.form_submit_button("Add Composer"):
-                process_input(val)
-                st.rerun()
-            if c2.form_submit_button("Next Step ➝"):
-                add_msg("user", "Next")
-                add_msg("assistant", "Moving to **Performers**.")
-                st.session_state.step = "S2_PERFORMERS"
-                st.rerun()
-
-    # 3. File Uploaders
-    elif step == "S2_AUDIO":
-        f = st.file_uploader("Upload WAV/MP3", type=["wav", "mp3"])
-        if f: 
-            data["audio_file"] = f
-            add_msg("user", "📁 Audio Uploaded")
-            process_input("Audio")
-            st.rerun()
-            
-    elif step == "S3_COVER":
-        f = st.file_uploader("Upload JPG/PNG (3000px)", type=["jpg", "png"])
+        f = st.file_uploader("WAV / MP3 / M4A", type=["wav", "mp3", "m4a", "ogg"])
         if f:
-            data["cover_art"] = f
-            add_msg("user", "📁 Art Uploaded")
-            process_input("Art")
+            d['audio'] = f
+            add_msg("user", "📁 Audio Uploaded")
+            next_step("S3_COVER", "Great. Finally, upload your **Cover Art**.")
             st.rerun()
 
-    # 4. Standard Text Input
-    else:
-        v = st.chat_input("Type your answer here...")
-        if v:
-            process_input(v)
+    elif step == "S3_COVER":
+        f = st.file_uploader("JPG / PNG (3000x3000px)", type=["jpg", "png"])
+        if f:
+            d['cover'] = f
+            add_msg("user", "🖼️ Art Uploaded")
+            next_step("REVIEW", "🎉 All data collected! Please review your release below.")
             st.rerun()
+
+    # --- STEP 4: REVIEW & EDIT ---
+    elif step == "REVIEW":
+        st.markdown("---")
+        st.subheader("💿 Release Summary")
+        
+        # Helper for Edit Rows
+        def row(label, val, edit_step):
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                st.markdown(f"**{label}:** {val}")
+            with c2:
+                if st.button("Edit", key=f"edit_{label}"):
+                    st.session_state.edit_return_mode = True
+                    st.session_state.step = edit_step
+                    add_msg("assistant", f"Ok, enter the new **{label}**:")
+                    st.rerun()
+
+        row("Title", d['release_title'], "S1_TITLE")
+        row("Genre", d['genre'], "S1_GENRE")
+        row("UPC", d['upc'], "S1_UPC")
+        
+        st.divider()
+        st.markdown("**Credits**")
+        st.write(f"**Composers:** {', '.join(d['composers'])}")
+        
+        for p in d['performers']:
+            st.write(f"**{p['name']}**: {p['role']}")
+            
+        st.divider()
+        row("Explicit", d['explicit'], "S2_EXPLICIT")
+        row("ISRC", d['isrc'], "S2_ISRC")
+        
+        st.markdown("---")
+        if st.button("🚀 SUBMIT TO STORES", use_container_width=True):
+            st.balloons()
+            st.success("Submitted successfully!")
+
+# --- 8. APP EXECUTION ---
+
+render_sidebar()
+st.title("BandLab Distribution")
+render_history()
+st.markdown("---")
+render_inputs()
