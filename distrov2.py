@@ -2,6 +2,12 @@ import streamlit as st
 import time
 import os
 
+import streamlit as st
+
+# --- DEBUG: CHECK SECRETS ---
+st.write("Debug: Secrets Found:", st.secrets.keys())
+# ----------------------------
+
 # --- IMPORTS FOR AI CLIENTS ---
 # We wrap these in try-except to prevent crashing if libraries aren't installed
 try:
@@ -471,3 +477,4 @@ else:
             if st.button("🚀 SUBMIT", use_container_width=True):
                 st.balloons()
                 st.success("Sent to Distribution!")
+
