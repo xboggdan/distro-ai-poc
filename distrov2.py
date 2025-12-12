@@ -1,13 +1,22 @@
 import streamlit as st
 import time
-import random
+import os
 
-# --- 1. CONFIGURATION ---
-st.set_page_config(page_title="BandLab DistroBot AI", page_icon="🤖", layout="wide")
+# --- IMPORTS FOR AI CLIENTS ---
+# We wrap these in try-except to prevent crashing if libraries aren't installed
+try:
+    from groq import Groq
+    import google.generativeai as genai
+    from openai import OpenAI
+except ImportError:
+    st.error("⚠️ Missing AI libraries. Please run: pip install groq google-generativeai openai")
+
+# --- 1. CONFIGURATION & STYLING ---
+st.set_page_config(page_title="BandLab DistroBot AI", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
-    /* BANDLAB BRANDING & UI POLISH */
+    /* BANDLAB THEME */
     .stApp { background-color: #ffffff; color: #222; }
     
     /* Chat Bubbles */
@@ -16,9 +25,28 @@ st.markdown("""
         border: 1px solid #e9ecef;
         border-radius: 12px;
         padding: 15px;
+        margin-bottom: 10px;
     }
     
-    /* Primary Button (Red) */
+    /* AI Source Badges */
+    .model-badge {
+        font-size: 0.7em;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-weight: bold;
+        display: inline-block;
+        margin-top: 8px;
+        font-family: 'Source Code Pro', monospace;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Specific Model Colors */
+    .badge-groq { background: #ffecb3; color: #ff6f00; border: 1px solid #ffca28; } /* Amber */
+    .badge-gemini { background: #e3f2fd; color: #0277bd; border: 1px solid #81d4fa; } /* Blue */
+    .badge-gpt { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; } /* Green */
+    .badge-fallback { background: #f5f5f5; color: #616161; border: 1px solid #e0e0e0; } /* Grey */
+
+    /* BandLab Red Button */
     .stButton > button {
         background-color: #F50000;
         color: white;
@@ -29,138 +57,167 @@ st.markdown("""
         transition: 0.2s;
     }
     .stButton > button:hover { background-color: #d10000; color: white; }
-
-    /* Secondary / Skip Button */
-    .skip-btn { border: 1px solid #ccc; color: #555; background: white; }
-
-    /* AI Analysis Badges */
-    .ai-badge {
-        font-size: 0.75em; padding: 4px 8px; border-radius: 6px;
-        display: inline-block; margin-top: 5px; font-weight: bold; font-family: monospace;
-    }
-    .badge-vision { background: #E3F2FD; color: #1565C0; border: 1px solid #90CAF9; }
-    .badge-audio { background: #E8F5E9; color: #2E7D32; border: 1px solid #A5D6A7; }
-    .badge-lyrics { background: #F3E5F5; color: #7B1FA2; border: 1px solid #CE93D8; }
-
-    /* Lyrics Editor Area */
-    .stTextArea textarea {
-        background-color: #fafafa;
-        border: 1px solid #eee;
-        font-family: 'Courier New', monospace;
+    
+    /* Education Box */
+    .edu-alert {
+        background-color: #FFFDE7;
+        border-left: 5px solid #FBC02D;
+        padding: 15px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        font-size: 0.9em;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOCK AI SERVICES ---
+# --- 2. THE AI CASCADE ENGINE ---
 
-def mock_vision_analysis():
-    """Simulates Groq/Llava checking cover art"""
-    with st.spinner("👁️ AI Vision Agent checking for explicit content & text..."):
-        time.sleep(2.0)
-    return True, "Safe: No nudity or illegal text detected."
+def get_ai_response(prompt, context="general"):
+    """
+    Tries AI models in order: Groq -> Gemini -> GPT -> Fallback.
+    Returns: (text_response, model_name, badge_class)
+    """
+    
+    system_prompt = """
+    You are DistroBot, a senior Music Distribution Expert at BandLab.
+    Your goal is to help artists release music to Spotify/Apple Music correctly.
+    
+    RULES:
+    1. Be concise, professional, and encouraging.
+    2. Strictly follow DSP metadata style guides (No 'feat' in titles, strict cover art rules).
+    3. If asked about BandLab specific features, mention that we keep 100% royalties.
+    4. Provide educational context when the user is confused.
+    """
 
-def mock_acr_cloud_scan():
-    """Simulates ACR Cloud copyright check"""
-    with st.spinner("🎧 ACR Cloud scanning 80M+ tracks for copyright..."):
+    # 1. TRY GROQ (Speed Layer)
+    if "GROQ_API_KEY" in st.secrets:
+        try:
+            client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                model="llama3-70b-8192",
+            )
+            return chat_completion.choices[0].message.content, "Groq (Llama 3)", "badge-groq"
+        except Exception as e:
+            print(f"Groq Failed: {e}")
+    
+    # 2. TRY GEMINI (Balanced Layer)
+    if "GEMINI_API_KEY" in st.secrets:
+        try:
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(system_prompt + "\n\nUser: " + prompt)
+            return response.text, "Google Gemini", "badge-gemini"
+        except Exception as e:
+            print(f"Gemini Failed: {e}")
+
+    # 3. TRY OPENAI (Reliability Layer)
+    if "OPENAI_API_KEY" in st.secrets:
+        try:
+            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.choices[0].message.content, "OpenAI GPT-4o", "badge-gpt"
+        except Exception as e:
+            print(f"OpenAI Failed: {e}")
+
+    # 4. FALLBACK
+    return "I am currently offline (API Keys missing or errors).", "Offline Fallback", "badge-fallback"
+
+# --- 3. MOCK ANALYZERS (Still simulated for file I/O reasons) ---
+
+def analyze_cover_art():
+    with st.spinner("👁️ AI Vision Agent scanning for guidelines..."):
+        time.sleep(2)
+    return True, "Safe: No text or nudity detected."
+
+def analyze_audio():
+    with st.spinner("🎧 ACR Cloud scanning 80M+ database..."):
         time.sleep(2.5)
-    return True, "Clean: No copyright matches found."
+    return True, "Clean: No copyright strikes found."
 
-def mock_whisper_transcribe():
-    """Simulates Whisper AI generating lyrics"""
-    with st.spinner("📝 Whisper AI transcribing lyrics..."):
-        time.sleep(3.0)
+def analyze_lyrics_whisper():
+    with st.spinner("📝 Whisper AI transcribing audio..."):
+        time.sleep(3)
     return """(Verse 1)
-Yeah, we rolling down the street
-BandLab on the beat
-Distribution made easy, you see
-Just chatting with the AI, feeling free
+BandLab on the track, we moving fast
+Distribution seamless, built to last
+AI checking flows, checking the art
+We getting ready for the charts
 
 (Chorus)
-Upload, release, let it fly
-To Spotify and Apple, reaching for the sky
-No more forms, no more stress
-DistroBot is here to handle the rest
+Upload it now, to the world we go
+Spotify, Apple, let the people know
 """
 
-def mock_edu_bot_response(query):
-    """Simulates the Education Chatbot RAG response"""
-    time.sleep(1) # Thinking time
-    query = query.lower()
-    if "royalties" in query:
-        return "💰 **Royalties:** You keep 100% of your royalties with BandLab Distribution. Payouts are processed monthly once stores report their earnings."
-    elif "upc" in query:
-        return "🏷️ **UPC (Universal Product Code):** This is the barcode for your album/single. If you don't have one, we assign a unique one to you for free."
-    elif "isrc" in query:
-        return "🎵 **ISRC:** This code identifies a specific recording (the audio file). It ensures you get paid even if your song appears on a compilation album."
-    elif "cover" in query:
-        return "🖼️ **Cover Art:** Must be 3000x3000px JPG/PNG. No blurred images, no pricing info, and no URLs allowed."
-    else:
-        return "🤖 I can help with questions about Royalties, UPCs, ISRCs, Cover Art, or Release Dates. What would you like to know?"
-
-# --- 3. STATE MANAGEMENT ---
+# --- 4. STATE MANAGEMENT ---
 
 def init_state():
-    defaults = {
-        "history": [],
-        "edu_history": [{"role": "assistant", "content": "🎓 **Education Mode Active**\n\nI am paused on your release. Ask me anything about music distribution, royalties, or metadata!"}],
-        "step": "INTRO", 
-        "edu_mode": False,
-        "edit_return_mode": False,
-        
-        # Temp holders
-        "temp_name": "",
-        "transcribed_lyrics": "",
-        
-        # Release Data
-        "data": {
-            "main_artist": "xboggdan",
-            "release_title": "", "version": "", "genre": "", "upc": "", "release_date": "ASAP", "label": "",
-            "composers": [], "performers": [], "production": [], "lyricists": [],
-            "lyrics_lang": "English", "explicit": "Clean", "isrc": "", "audio": None, "cover": None, "final_lyrics": ""
-        }
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    if "step" not in st.session_state:
+        st.session_state.update({
+            "history": [],
+            "edu_chat_history": [{"role": "assistant", "content": "🎓 **Education Mode Active**\n\nI'm connected to Groq, Gemini, and GPT. Ask me anything about music distribution!", "model": "System", "badge": "badge-fallback"}],
+            "step": "INTRO",
+            "edu_mode": False,
+            "edit_return_mode": False,
+            "temp_name": "",
+            "transcribed_lyrics": "",
+            "data": {
+                "main_artist": "xboggdan",
+                "release_title": "", "version": "", "genre": "", "upc": "", "release_date": "ASAP", "label": "",
+                "composers": [], "performers": [], "production": [], "lyricists": [],
+                "lyrics_lang": "English", "explicit": "Clean", "isrc": "", "audio": None, "cover": None, "final_lyrics": ""
+            }
+        })
 
 init_state()
 
-# --- 4. LOGIC HANDLERS ---
+# --- 5. LOGIC & ROUTING ---
 
-def add_msg(role, text, badge=None):
-    msg = {"role": role, "content": text}
-    if badge: msg["badge"] = badge
+def add_msg(role, text, model_name="System", badge_class="badge-fallback"):
+    msg = {
+        "role": role, 
+        "content": text, 
+        "model": model_name, 
+        "badge": badge_class
+    }
     
     if st.session_state.edu_mode:
-        st.session_state.edu_history.append(msg)
+        st.session_state.edu_chat_history.append(msg)
     else:
         st.session_state.history.append(msg)
 
-def next_step(step_id, bot_msg, badge=None):
+def next_step(step_id, prompt):
     if st.session_state.edit_return_mode:
         st.session_state.edit_return_mode = False
         st.session_state.step = "REVIEW"
-        add_msg("assistant", "✅ Updated. Returning to Review.")
+        add_msg("assistant", "✅ Updated. Returning to Review.", "System", "badge-fallback")
     else:
         st.session_state.step = step_id
-        add_msg("assistant", bot_msg, badge)
+        add_msg("assistant", prompt, "System", "badge-fallback")
 
-def start_chat():
+def start_wizard():
     st.session_state.step = "S1_TITLE"
-    st.session_state.history = [] # Clear intro
-    add_msg("assistant", "🔥 **Let's get started.**\n\nI'll guide you step-by-step. I've detected your Main Artist profile is **xboggdan**.\n\n**Step 1:** What is the **Release Title**?")
+    st.session_state.history = []
+    add_msg("assistant", "🔥 **Let's Build Your Release.**\n\nI've detected your profile: **xboggdan**.\n\n**Step 1:** What is the **Release Title**?", "System", "badge-fallback")
 
-# --- SMART ADDERS (Composers, Performers, Producers) ---
-
-def smart_add_person(role_type, is_me):
+# --- SMART ADDER LOGIC ---
+def smart_add(role_type, is_me):
     d = st.session_state.data
-    name = d['main_artist'] if is_me else "Someone Else"
     
     if is_me:
         add_msg("user", f"Yes, I am the {role_type[:-1]}")
         if role_type == "Composers":
             d['composers'].append(d['main_artist'])
-            next_step("S2_COMPOSERS_MORE", f"Added **{d['main_artist']}**. Any others?")
+            next_step("S2_COMPOSERS_MORE", f"Added **{d['main_artist']}**. Add another?")
         elif role_type == "Performers":
             st.session_state.temp_name = d['main_artist']
             next_step("S2_PERF_ROLE", f"What instrument did **{d['main_artist']}** play?")
@@ -173,92 +230,107 @@ def smart_add_person(role_type, is_me):
         elif role_type == "Performers": next_step("S2_PERF_NAME", "Enter Performer Name:")
         elif role_type == "Producers": next_step("S2_PROD_NAME", "Enter Producer Name:")
 
-# --- 5. UI COMPONENTS ---
+# --- 6. UI RENDERERS ---
 
 def render_sidebar():
     with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=150)
+        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=160)
         
-        # MODE SWITCHER
-        st.markdown("### 🧠 AI Modes")
-        mode = st.toggle("🎓 Education Bot", value=st.session_state.edu_mode)
+        st.markdown("### 🧠 Neural Core")
+        st.caption("Active Models:")
+        if "GROQ_API_KEY" in st.secrets: st.markdown("🟢 **Groq** (Llama 3)")
+        if "GEMINI_API_KEY" in st.secrets: st.markdown("🔵 **Gemini** (Pro)")
+        if "OPENAI_API_KEY" in st.secrets: st.markdown("🟣 **OpenAI** (GPT-4)")
         
+        st.divider()
+        
+        # Education Toggle
+        mode = st.toggle("🎓 Education Mode", value=st.session_state.edu_mode)
         if mode != st.session_state.edu_mode:
             st.session_state.edu_mode = mode
             st.rerun()
-
+            
         if st.session_state.edu_mode:
-            st.info("You are chatting with the **Knowledge Base**. Toggle off to resume release.")
+            st.info("Ask any question. The AI Cascade will answer.")
         else:
             d = st.session_state.data
-            st.markdown("### 📀 Live Draft")
+            st.markdown("### 📀 Release Draft")
             if d['release_title']:
                 st.write(f"**{d['release_title']}**")
-                st.caption(f"{d['main_artist']} • {d['genre']}")
+                st.caption(f"{d['main_artist']}")
             else:
-                st.caption("No data yet.")
-
-        if st.button("Reset All"):
+                st.caption("Empty")
+        
+        if st.button("Reset Session"):
             st.session_state.clear()
             st.rerun()
 
-def render_chat_history(history):
+def render_chat_stream(history):
     for msg in history:
         with st.chat_message(msg['role']):
             st.markdown(msg['content'])
-            if "badge" in msg:
-                b_cls = "badge-vision" if "Vision" in msg['badge'] else "badge-audio" if "Audio" in msg['badge'] else "badge-lyrics"
-                st.markdown(f"<span class='ai-badge {b_cls}'>⚡ {msg['badge']}</span>", unsafe_allow_html=True)
+            if msg.get('model'):
+                st.markdown(f"<span class='model-badge {msg['badge']}'>⚡ {msg['model']}</span>", unsafe_allow_html=True)
 
-# --- 6. MAIN APP LOGIC ---
+# --- 7. MAIN APP ---
 
 render_sidebar()
 
-# A. EDUCATION MODE (FULL BOT SWAP)
+# MODE A: EDUCATION CHATBOT (REAL AI)
 if st.session_state.edu_mode:
     st.title("🎓 Distribution Knowledge Base")
-    render_chat_history(st.session_state.edu_history)
+    render_chat_stream(st.session_state.edu_chat_history)
     
-    user_q = st.chat_input("Ask about UPCs, Royalties, Cover Art...")
-    if user_q:
-        add_msg("user", user_q)
-        response = mock_edu_bot_response(user_q)
-        add_msg("assistant", response)
+    query = st.chat_input("Ask about Royalties, ISRC, Cover Art...")
+    if query:
+        # 1. Show user message
+        add_msg("user", query)
         st.rerun()
 
-# B. RELEASE MODE (NORMAL FLOW)
+    # Process response if last message was user (to avoid blocking UI)
+    last_msg = st.session_state.edu_chat_history[-1]
+    if last_msg['role'] == "user":
+        with st.spinner("🤖 AI Cascade thinking..."):
+            # CALL THE REAL AI
+            resp_text, model_name, badge_cls = get_ai_response(last_msg['content'])
+            add_msg("assistant", resp_text, model_name, badge_cls)
+            st.rerun()
+
+# MODE B: RELEASE WIZARD
 else:
     st.title("BandLab Distribution AI")
     
     if st.session_state.step == "INTRO":
         st.markdown("""
-        <div style="border:1px solid #ddd; padding:20px; border-radius:10px; text-align:center; background:#fafafa;">
-            <h3>🤖 AI-Powered Release Agent</h3>
-            <p>I use 3 AI models to ensure your release is perfect:</p>
-            <p>👁️ <b>Groq Vision:</b> Checks artwork compliance.<br>
-            🎧 <b>ACR Cloud:</b> Checks copyright.<br>
-            📝 <b>Whisper:</b> Transcribes lyrics automatically.</p>
+        <div style="background:#f9f9f9; padding:20px; border-radius:10px; border:1px solid #eee;">
+            <h3>🚀 AI Release Wizard</h3>
+            <p>Welcome to the future of distribution. This tool uses:</p>
+            <ul>
+                <li><b>Llama 3 / GPT-4</b> for metadata validation.</li>
+                <li><b>Vision AI</b> for cover art compliance.</li>
+                <li><b>Whisper</b> for automatic lyrics.</li>
+            </ul>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("🚀 Start New Release", use_container_width=True):
-            start_chat()
+        if st.button("Start Release", use_container_width=True):
+            start_wizard()
             st.rerun()
-            
+    
     else:
-        render_chat_history(st.session_state.history)
+        render_chat_stream(st.session_state.history)
         
         step = st.session_state.step
         d = st.session_state.data
-        
-        # --- INPUT ROUTER ---
-        
-        # 1. SIMPLE TEXT INPUTS
+
+        # --- DYNAMIC INPUTS ---
+
+        # 1. SIMPLE TEXT
         if step == "S1_TITLE":
-            st.chat_input("Track Title...", key="i", on_submit=lambda: (d.update({"release_title": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S1_VERSION", "Any specific **Version**?")))
-            
+            st.chat_input("Enter Title...", key="i", on_submit=lambda: (d.update({"release_title": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S1_VERSION", "Any specific **Version**?")))
+
         elif step == "S1_VERSION":
-            if st.button("Skip / Original Mix", use_container_width=True):
-                add_msg("user", "Original Mix")
+            if st.button("Skip / Original", use_container_width=True):
+                add_msg("user", "Original")
                 next_step("S1_GENRE", "Select **Genre**:")
                 st.rerun()
             st.chat_input("e.g. Radio Edit...", key="i", on_submit=lambda: (d.update({"version": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S1_GENRE", "Select **Genre**:")))
@@ -269,187 +341,133 @@ else:
                 add_msg("user", "Generate Free UPC")
                 next_step("S1_LABEL", "**Record Label** name?")
                 st.rerun()
-            st.chat_input("Enter 12-digit UPC...", key="i", on_submit=lambda: (d.update({"upc": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S1_LABEL", "**Record Label** name?")))
+            st.chat_input("Enter UPC...", key="i", on_submit=lambda: (d.update({"upc": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S1_LABEL", "**Record Label** name?")))
 
         elif step == "S1_LABEL":
-            if st.button("Skip / Use Artist Name", use_container_width=True):
+            if st.button("Use Artist Name", use_container_width=True):
                 d['label'] = d['main_artist']
-                add_msg("user", "Use Artist Name")
-                next_step("S2_COMPOSERS_START", f"**Composers:** Is **{d['main_artist']}** the composer?")
+                add_msg("user", d['main_artist'])
+                next_step("S2_COMPOSERS_START", f"Is **{d['main_artist']}** the composer?")
                 st.rerun()
             st.chat_input("Label Name...", key="i", on_submit=lambda: (d.update({"label": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S2_COMPOSERS_START", f"Is **{d['main_artist']}** the composer?")))
 
-        # 2. SMART ROLES (Composers, Performers, Producers)
+        # 2. SMART ROLES
         elif step == "S2_COMPOSERS_START":
             c1, c2 = st.columns(2)
-            if c1.button(f"Yes, {d['main_artist']}", use_container_width=True): smart_add_person("Composers", True); st.rerun()
-            if c2.button("No / Someone Else", use_container_width=True): smart_add_person("Composers", False); st.rerun()
-
+            if c1.button(f"Yes, {d['main_artist']}", use_container_width=True): smart_add("Composers", True); st.rerun()
+            if c2.button("No / Someone Else", use_container_width=True): smart_add("Composers", False); st.rerun()
+            
         elif step == "S2_COMPOSERS_INPUT":
-            st.chat_input("Legal First & Last Name...", key="i", on_submit=lambda: (d['composers'].append(st.session_state.i), add_msg("user", st.session_state.i), next_step("S2_COMPOSERS_MORE", f"Added {st.session_state.i}. Any others?")))
-
+            st.chat_input("Legal Name...", key="i", on_submit=lambda: (d['composers'].append(st.session_state.i), add_msg("user", st.session_state.i), next_step("S2_COMPOSERS_MORE", "Add another?")))
+            
         elif step == "S2_COMPOSERS_MORE":
             c1, c2 = st.columns(2)
-            if c1.button("Add Another", use_container_width=True): next_step("S2_COMPOSERS_INPUT", "Enter Name:"); st.rerun()
-            if c2.button("Done", use_container_width=True): next_step("S2_PERF_START", f"**Performers:** Did **{d['main_artist']}** perform?"); st.rerun()
+            if c1.button("Add Another", use_container_width=True): next_step("S2_COMPOSERS_INPUT", "Name:"); st.rerun()
+            if c2.button("Done", use_container_width=True): next_step("S2_PERF_START", f"Did **{d['main_artist']}** perform?"); st.rerun()
 
         elif step == "S2_PERF_START":
             c1, c2 = st.columns(2)
-            if c1.button(f"Yes, {d['main_artist']}", use_container_width=True): smart_add_person("Performers", True); st.rerun()
-            if c2.button("No / Someone Else", use_container_width=True): smart_add_person("Performers", False); st.rerun()
+            if c1.button("Yes", use_container_width=True): smart_add("Performers", True); st.rerun()
+            if c2.button("No", use_container_width=True): smart_add("Performers", False); st.rerun()
 
         elif step == "S2_PERF_NAME":
-            st.chat_input("Performer Name...", key="i", on_submit=lambda: (setattr(st.session_state, 'temp_name', st.session_state.i), add_msg("user", st.session_state.i), next_step("S2_PERF_ROLE", f"Instrument for **{st.session_state.i}**?")))
-        
+            st.chat_input("Name...", key="i", on_submit=lambda: (setattr(st.session_state, 'temp_name', st.session_state.i), add_msg("user", st.session_state.i), next_step("S2_PERF_ROLE", "Instrument?")))
+
         elif step == "S2_PERF_ROLE":
             cols = st.columns(4)
-            insts = ["Vocals", "Guitar", "Bass", "Drums", "Keys", "Other"]
-            for i, inst in enumerate(insts):
+            for i, inst in enumerate(["Vocals", "Guitar", "Bass", "Drums", "Keys", "Other"]):
                 if cols[i%4 if i<4 else 0].button(inst, use_container_width=True):
                     d['performers'].append({"name": st.session_state.temp_name, "role": inst})
                     add_msg("user", inst)
-                    next_step("S2_PERF_MORE", "Add another performer?")
+                    next_step("S2_PERF_MORE", "Add another?")
                     st.rerun()
-
+                    
         elif step == "S2_PERF_MORE":
             c1, c2 = st.columns(2)
-            if c1.button("Add Another", use_container_width=True): next_step("S2_PERF_NAME", "Enter Name:"); st.rerun()
-            if c2.button("Done", use_container_width=True): next_step("S2_PROD_START", f"**Production:** Is **{d['main_artist']}** the producer?"); st.rerun()
+            if c1.button("Add Another", use_container_width=True): next_step("S2_PERF_NAME", "Name:"); st.rerun()
+            if c2.button("Done", use_container_width=True): next_step("S2_PROD_START", f"Is **{d['main_artist']}** the producer?"); st.rerun()
 
-        # 3. PRODUCER LOGIC (NEW REQUEST)
         elif step == "S2_PROD_START":
             c1, c2 = st.columns(2)
-            if c1.button(f"Yes, {d['main_artist']}", use_container_width=True): smart_add_person("Producers", True); st.rerun()
-            if c2.button("No / Someone Else", use_container_width=True): smart_add_person("Producers", False); st.rerun()
-
+            if c1.button("Yes", use_container_width=True): smart_add("Producers", True); st.rerun()
+            if c2.button("No", use_container_width=True): smart_add("Producers", False); st.rerun()
+            
         elif step == "S2_PROD_NAME":
-             st.chat_input("Producer Name...", key="i", on_submit=lambda: (setattr(st.session_state, 'temp_name', st.session_state.i), add_msg("user", st.session_state.i), next_step("S2_PROD_ROLE", "Select Role:")))
+             st.chat_input("Name...", key="i", on_submit=lambda: (setattr(st.session_state, 'temp_name', st.session_state.i), add_msg("user", st.session_state.i), next_step("S2_PROD_ROLE", "Role?")))
 
         elif step == "S2_PROD_ROLE":
-            roles = ["Producer", "Mixing Engineer", "Mastering Engineer"]
-            for r in roles:
+            for r in ["Producer", "Mixing Engineer", "Mastering Engineer"]:
                 if st.button(r, use_container_width=True):
                     d['production'].append({"name": st.session_state.temp_name, "role": r})
                     add_msg("user", r)
-                    next_step("S2_LYRICS_LANG", "Select **Language**:")
+                    next_step("S1_GENRE", "Select **Genre**:")
                     st.rerun()
 
-        # 4. LYRICS & ASSETS
+        # 3. SELECTORS
         elif step == "S1_GENRE":
-            genres = ["Pop", "Hip Hop", "Rock", "R&B", "Electronic"]
-            for g in genres:
+            for g in ["Pop", "Hip Hop", "Rock", "R&B", "Electronic"]:
                 if st.button(g, use_container_width=True):
                     d['genre'] = g
                     add_msg("user", g)
-                    next_step("S1_DATE", "Release Date?")
+                    next_step("S1_DATE", "**Release Date**?")
                     st.rerun()
-                    
+
         elif step == "S1_DATE":
             if st.button("ASAP", use_container_width=True):
                 d['release_date'] = "ASAP"
                 add_msg("user", "ASAP")
                 next_step("S1_UPC", "Do you have a **UPC**?")
                 st.rerun()
-            
-        elif step == "S2_LYRICS_LANG":
-            if st.button("English", use_container_width=True):
-                d['lyrics_lang'] = "English"
-                add_msg("user", "English")
-                next_step("S2_EXPLICIT", "Is it **Explicit**?")
-                st.rerun()
-            if st.button("Instrumental", use_container_width=True):
-                d['lyrics_lang'] = "Instrumental"
-                add_msg("user", "Instrumental")
-                next_step("S2_ISRC", "Do you have an **ISRC**?")
-                st.rerun()
-
-        elif step == "S2_EXPLICIT":
-            c1, c2 = st.columns(2)
-            if c1.button("Clean", use_container_width=True): d['explicit']="Clean"; add_msg("user","Clean"); next_step("S2_ISRC","**ISRC**?"); st.rerun()
-            if c2.button("Explicit", use_container_width=True): d['explicit']="Explicit"; add_msg("user","Explicit"); next_step("S2_ISRC","**ISRC**?"); st.rerun()
 
         elif step == "S2_ISRC":
             if st.button("Generate Free ISRC", use_container_width=True):
-                d['isrc'] = "AUTO-GENERATED"
-                add_msg("user", "Generate Free ISRC")
+                d['isrc'] = "AUTO"
+                add_msg("user", "Generate Free")
                 next_step("S3_COVER", "Upload **Cover Art**.")
                 st.rerun()
             st.chat_input("Enter ISRC...", key="i", on_submit=lambda: (d.update({"isrc": st.session_state.i}), add_msg("user", st.session_state.i), next_step("S3_COVER", "Upload **Cover Art**.")))
 
-        # 5. AI CHECKS (VISION, AUDIO, LYRICS)
+        # 4. FILES & AI CHECKS
         elif step == "S3_COVER":
-            f = st.file_uploader("JPG/PNG 3000px", type=["jpg","png"])
+            f = st.file_uploader("Upload Cover", type=["jpg","png"])
             if f:
                 d['cover'] = f
-                add_msg("user", "🖼️ Art Uploaded")
-                
-                # MOCK VISION CHECK
-                is_safe, reason = mock_vision_analysis()
-                if is_safe:
-                    next_step("S2_AUDIO", f"✅ {reason}\n\nNow upload **Audio File**.", "Vision Agent")
-                else:
-                    st.error("Issues detected with artwork.")
+                add_msg("user", "Uploaded Art")
+                safe, reason = analyze_cover_art() # Mocked
+                if safe:
+                    next_step("S2_AUDIO", f"✅ {reason}\n\nUpload **Audio**.", "Vision Agent", "badge-gemini")
                 st.rerun()
 
         elif step == "S2_AUDIO":
-            f = st.file_uploader("WAV/MP3", type=["wav","mp3"])
+            f = st.file_uploader("Upload Audio", type=["wav","mp3"])
             if f:
                 d['audio'] = f
-                add_msg("user", "🎵 Audio Uploaded")
-                
-                # MOCK AUDIO CHECK
-                is_clean, reason = mock_acr_cloud_scan()
-                if is_clean:
-                    if d['lyrics_lang'] == "Instrumental":
-                        next_step("REVIEW", f"✅ {reason}\n\nReview your release.", "Audio Agent")
-                    else:
-                        next_step("S2_LYRICS_TRANS", f"✅ {reason}\n\nTranscribing Lyrics...", "Audio Agent")
+                add_msg("user", "Uploaded Audio")
+                safe, reason = analyze_audio() # Mocked
+                next_step("S2_LYRICS_TRANS", f"✅ {reason}\n\nGenerating Lyrics...", "Audio Agent", "badge-gemini")
                 st.rerun()
 
         elif step == "S2_LYRICS_TRANS":
-            # MOCK WHISPER CHECK
-            lyrics = mock_whisper_transcribe()
+            lyrics = analyze_lyrics_whisper() # Mocked
             st.session_state.transcribed_lyrics = lyrics
-            next_step("S2_LYRICS_EDIT", "📝 **Lyrics Generated.** Please review and edit before sending to DSPs.", "Lyrics Agent")
+            next_step("S2_LYRICS_EDIT", "📝 **Lyrics Generated.** Please verify.", "Lyrics Agent", "badge-groq")
             st.rerun()
 
         elif step == "S2_LYRICS_EDIT":
-            edited_lyrics = st.text_area("Edit Lyrics", value=st.session_state.transcribed_lyrics, height=200)
-            st.warning("These lyrics will be sent to Spotify/Apple. Ensure accuracy.")
-            
-            if st.button("✅ Confirm Lyrics", use_container_width=True):
-                d['final_lyrics'] = edited_lyrics
+            val = st.text_area("Editor", value=st.session_state.transcribed_lyrics, height=200)
+            if st.button("Confirm Lyrics", use_container_width=True):
+                d['final_lyrics'] = val
                 add_msg("user", "Lyrics Confirmed")
                 next_step("REVIEW", "🎉 Release Data Complete!")
                 st.rerun()
 
-        # 6. FINAL REVIEW
+        # 5. REVIEW
         elif step == "REVIEW":
-            st.subheader("💿 Release Summary")
-            st.caption("Click Edit to modify specific fields.")
-            
-            def row(label, val, edit_step):
-                c1, c2 = st.columns([4,1])
-                c1.markdown(f"**{label}:** {val}")
-                if c2.button("Edit", key=label):
-                    st.session_state.edit_return_mode = True
-                    st.session_state.step = edit_step
-                    add_msg("assistant", f"Enter new **{label}**:")
-                    st.rerun()
-
-            row("Title", d['release_title'], "S1_TITLE")
-            row("UPC", d['upc'], "S1_UPC")
-            row("Explicit", d['explicit'], "S2_EXPLICIT")
-            
-            st.divider()
-            st.write(f"**Composers:** {', '.join(d['composers'])}")
-            st.write(f"**Performers:** {len(d['performers'])}")
+            st.subheader("💿 Summary")
+            st.write(f"**Title:** {d['release_title']}")
+            st.write(f"**UPC:** {d['upc']}")
             st.write(f"**Producers:** {len(d['production'])}")
             
-            if d['lyrics_lang'] != "Instrumental":
-                with st.expander("View Final Lyrics"):
-                    st.text(d['final_lyrics'])
-            
-            if st.button("🚀 SUBMIT TO STORES", use_container_width=True):
+            if st.button("🚀 SUBMIT", use_container_width=True):
                 st.balloons()
-                st.success("Release Submitted! Agents are monitoring delivery.")
+                st.success("Sent to Distribution!")
