@@ -8,71 +8,84 @@ try:
     import google.generativeai as genai
     from openai import OpenAI
 except ImportError:
-    pass # We handle missing libs gracefully in the AI function
+    pass
 
-# --- 2. CONFIGURATION & CSS ---
-st.set_page_config(page_title="BandLab Distribution", page_icon="🔥", layout="centered")
+# --- 2. CONFIGURATION & STYLING ---
+st.set_page_config(page_title="BandLab Distribution", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
-    /* BANDLAB CLEAN THEME */
-    .stApp { background-color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    /* GLOBAL THEME: Clean BandLab White/Red */
+    .stApp { background-color: #FAFAFA; color: #222; font-family: 'Inter', sans-serif; }
     
-    /* Hide Streamlit Elements */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* Chat Message Styling */
-    .user-msg {
-        background-color: #F50000; color: white; 
-        padding: 10px 15px; border-radius: 15px 15px 0 15px;
-        margin: 5px 0 5px auto; max-width: 80%; width: fit-content;
-        box-shadow: 0 2px 5px rgba(245,0,0,0.2);
-    }
-    .bot-msg {
-        background-color: #F3F4F6; color: #1F2937;
-        padding: 10px 15px; border-radius: 15px 15px 15px 0;
-        margin: 5px auto 5px 0; max-width: 80%; width: fit-content;
+    /* THE FOCUS CARD (Main Interaction Area) */
+    .focus-card {
+        background-color: white;
+        padding: 40px;
+        border-radius: 20px;
         border: 1px solid #E5E7EB;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+        margin-bottom: 30px;
+        text-align: center;
     }
     
-    /* Input Area Styling */
-    .input-container {
-        position: fixed; bottom: 0; left: 0; width: 100%;
-        background: white; padding: 20px; border-top: 1px solid #eee;
-        z-index: 999;
-    }
+    /* Typography */
+    .question-header { font-size: 28px; font-weight: 700; color: #111; margin-bottom: 10px; }
+    .question-sub { font-size: 16px; color: #666; margin-bottom: 25px; }
     
-    /* Button Styling */
+    /* AI Tip Box */
+    .ai-tip {
+        background-color: #FFFBEB; border: 1px solid #FCD34D; color: #92400E;
+        padding: 12px; border-radius: 8px; font-size: 0.9em; margin: 15px auto;
+        max-width: 600px; display: flex; align-items: center; justify-content: center; gap: 10px;
+    }
+
+    /* CHAT HISTORY (Past Log) */
+    .history-container {
+        max-width: 800px; margin: 0 auto 30px auto; padding: 20px;
+        opacity: 0.8;
+    }
+    .user-bubble {
+        background: #F50000; color: white; padding: 8px 16px; border-radius: 20px;
+        display: inline-block; margin: 5px; font-size: 0.9em; float: right; clear: both;
+    }
+    .bot-bubble {
+        background: #E5E7EB; color: #333; padding: 8px 16px; border-radius: 20px;
+        display: inline-block; margin: 5px; font-size: 0.9em; float: left; clear: both;
+    }
+
+    /* BUTTONS */
     .stButton > button {
-        border-radius: 12px; font-weight: 600; padding: 0.5rem 1rem;
-        border: 1px solid #eee; background-color: white; color: #333;
-        transition: all 0.2s; width: 100%;
+        border-radius: 12px; height: 50px; font-weight: 600; font-size: 16px;
+        border: 1px solid #E5E7EB; width: 100%; transition: all 0.2s;
     }
     .stButton > button:hover {
-        border-color: #F50000; color: #F50000; background-color: #FFF5F5;
+        border-color: #F50000; color: #F50000; background: #FFF5F5; transform: translateY(-2px);
     }
-    /* Primary Action Button (used for 'Next', 'Confirm') */
-    .primary-btn > button {
+    .primary-action > button {
         background-color: #F50000 !important; color: white !important; border: none !important;
     }
-    
-    /* AI Badge */
-    .ai-badge { font-size: 0.65em; opacity: 0.7; margin-left: 8px; font-family: monospace; }
+
+    /* LIVE DRAFT SIDEBAR */
+    .draft-item {
+        padding: 10px; border-bottom: 1px solid #eee; font-size: 0.9em;
+        display: flex; justify-content: space-between;
+    }
+    .draft-label { color: #888; }
+    .draft-val { font-weight: 600; color: #333; }
+
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. AI ENGINE (ROBUST) ---
+# --- 3. AI ENGINE ---
 
 def ask_ai(prompt):
     """
     Returns (Response_Text, Badge_HTML)
-    Tries connected AIs, falls back to static logic if offline.
     """
-    sys_prompt = "You are a helpful music distribution assistant."
+    sys_prompt = "You are a concise BandLab Distribution expert."
     
-    # GROQ
+    # 1. Groq
     if "GROQ_API_KEY" in st.secrets:
         try:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -83,7 +96,7 @@ def ask_ai(prompt):
             return res.choices[0].message.content, "⚡ Llama 3"
         except: pass
 
-    # GEMINI
+    # 2. Gemini
     if "GEMINI_API_KEY" in st.secrets:
         try:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -92,7 +105,7 @@ def ask_ai(prompt):
             return res.text, "✨ Gemini"
         except: pass
 
-    # OPENAI
+    # 3. GPT
     if "OPENAI_API_KEY" in st.secrets:
         try:
             client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -103,309 +116,324 @@ def ask_ai(prompt):
             return res.choices[0].message.content, "🧠 GPT-4"
         except: pass
 
-    # FALLBACK (No API Key)
-    return None, "⚙️ Logic" # Return None to let the app handle static text
+    return None, "⚙️ Logic"
 
-def get_edu_info(topic):
-    ai_resp, badge = ask_ai(f"Explain what {topic} is in music distribution in 1 short sentence.")
-    if ai_resp: return ai_resp, badge
+def get_edu_context(step_name):
+    """Returns AI explanation for the current step if Edu Mode is on"""
+    if not st.session_state.edu_mode: return None
     
-    # Fallback Dict
-    kb = {
-        "UPC": "Universal Product Code: A barcode that tracks sales of your release.",
-        "ISRC": "International Standard Recording Code: The unique fingerprint for your audio track.",
-        "Explicit": "Mark 'Explicit' if lyrics contain profanity, violence, or drug references."
+    prompts = {
+        "UPC": "Explain what a UPC code is in music distribution in 1 sentence.",
+        "ISRC": "Explain what an ISRC code is in 1 sentence.",
+        "Composers": "Why do I need legal names for composers in music metadata?",
+        "Explicit": "What counts as explicit content in music?",
+        "Cover Art": "What are the strict rules for Spotify cover art?"
     }
-    return kb.get(topic, "Distribution Metadata"), "⚙️ Logic"
+    
+    if step_name in prompts:
+        txt, badge = ask_ai(prompts[step_name])
+        return f"{txt} ({badge})"
+    return None
 
-# --- 4. STATE MANAGEMENT ---
+# --- 4. STATE & LOGIC ---
 
 def init():
-    if "session_id" not in st.session_state:
+    if "step" not in st.session_state:
         st.session_state.update({
-            "session_id": str(uuid.uuid4()),
-            "step": 1, # Numeric step for linear progression
-            "history": [], # Chat log
+            "step": 1,
+            "history": [], # Just a log of past actions
             "edu_mode": False,
-            # The Data Payload
+            "edit_mode": False,
+            "temp_name": "",
             "data": {
                 "title": "", "version": "", "artist": "xboggdan", "genre": "", 
                 "date": "ASAP", "label": "", "upc": "",
                 "composers": [], "performers": [], "producers": [],
                 "lang": "English", "explicit": "Clean", "isrc": "",
                 "cover": None, "audio": None
-            },
-            # Temp holders for loop flows
-            "temp_name": "", "temp_role": ""
+            }
         })
-        # Add Welcome Message
-        add_msg("assistant", "🔥 **Welcome to BandLab Distribution.**\n\nI'll help you get your music on Spotify. Let's start with the **Release Details**.")
-        add_msg("assistant", "What is the **Release Title**?")
 
-def add_msg(role, text, badge=""):
-    st.session_state.history.append({"role": role, "text": text, "badge": badge})
-
-def go_next(user_text=None, set_key=None, set_val=None):
+def next_step(val=None, key=None, save_val=None, jump_to=None):
     """
-    Universal Advance Function
-    1. Records User Answer
-    2. Updates Data Payload
-    3. Increments Step
-    4. Reruns app to show next question
+    Universal State Advance
     """
-    if user_text:
-        add_msg("user", user_text)
+    # 1. Log History
+    if val:
+        # Log the bot's LAST question (from previous render) logic would be complex, 
+        # simpler to just log the user's answer.
+        st.session_state.history.append({"role": "user", "text": val})
     
-    if set_key and set_val is not None:
-        st.session_state.data[set_key] = set_val
+    # 2. Save Data
+    if key:
+        if isinstance(save_val, list): # Append mode
+            st.session_state.data[key].append(save_val[0])
+        else: # Overwrite mode
+            st.session_state.data[key] = save_val
+            
+    # 3. Advance
+    if st.session_state.edit_mode:
+        st.session_state.edit_mode = False
+        st.session_state.step = 99 # Review
+    elif jump_to:
+        st.session_state.step = jump_to
+    else:
+        st.session_state.step += 1
     
-    st.session_state.step += 1
     st.rerun()
 
-# --- 5. LOGIC FLOW (THE STEPS) ---
+# --- 5. RENDER FUNCTIONS (THE UX) ---
 
-def render_step_logic():
-    step = st.session_state.step
-    d = st.session_state.data
+def render_history():
+    """Renders the faint conversation log above the focus card"""
+    if not st.session_state.history: return
     
-    # === STEP 1: RELEASE INFO ===
-    if step == 1: # Title is handled in init
-        with st.container():
-            val = st.text_input("Release Title", placeholder="e.g. Summer Vibes", key=f"in_{step}")
-            if st.button("Next ➝", type="primary", use_container_width=True):
-                if val: go_next(val, "title", val)
+    st.markdown("<div class='history-container'>", unsafe_allow_html=True)
+    for msg in st.session_state.history[-4:]: # Only show last 4 interactions to keep focus
+        cls = "user-bubble" if msg['role'] == "user" else "bot-bubble"
+        st.markdown(f"<div class='{cls}'>{msg['text']}</div>", unsafe_allow_html=True)
+    st.markdown("<div style='clear:both;'></div></div>", unsafe_allow_html=True)
 
-    elif step == 2:
-        if len(st.session_state.history) < 3: add_msg("assistant", "Any **Version** info? (e.g. Radio Edit, Remix)")
-        c1, c2 = st.columns(2)
-        if c1.button("Original Mix (Skip)"): go_next("Original Mix", "version", "")
-        with c2:
-            val = st.text_input("Version", placeholder="e.g. Acoustic", label_visibility="collapsed", key=f"in_{step}")
-            if val and st.button("Set Version"): go_next(val, "version", val)
-
-    elif step == 3:
-        if len(st.session_state.history) < 5: add_msg("assistant", "Select your **Genre**.")
-        genres = ["Hip Hop", "Pop", "Rock", "R&B", "Electronic", "Alternative", "Country", "Latin"]
-        cols = st.columns(4)
-        for i, g in enumerate(genres):
-            if cols[i%4].button(g, use_container_width=True):
-                go_next(g, "genre", g)
-
-    elif step == 4:
-        if len(st.session_state.history) < 7: add_msg("assistant", "When should we release this?")
-        c1, c2 = st.columns(2)
-        if c1.button("ASAP (As soon as possible)", use_container_width=True):
-            go_next("ASAP", "date", "ASAP")
-        with c2:
-            date_val = st.date_input("Pick Date", label_visibility="collapsed")
-            if st.button("Confirm Date"): go_next(str(date_val), "date", str(date_val))
-
-    elif step == 5:
-        if len(st.session_state.history) < 9: 
-            msg, badge = get_edu_info("UPC")
-            add_msg("assistant", f"Do you have a **UPC**?\n\n*💡 {msg}*", badge)
+def render_focus_card(title, subtitle=None, ai_context_key=None):
+    """
+    The Core UI Component: A centered card with the question.
+    """
+    st.markdown(f"""
+    <div class="focus-card">
+        <div class="question-header">{title}</div>
+        {f'<div class="question-sub">{subtitle}</div>' if subtitle else ''}
+    """, unsafe_allow_html=True)
+    
+    # Render AI Tip inside the card if needed
+    if ai_context_key:
+        tip = get_edu_context(ai_context_key)
+        if tip:
+            st.markdown(f'<div class="ai-tip">💡 <b>AI Tip:</b> {tip}</div>', unsafe_allow_html=True)
             
-        c1, c2 = st.columns(2)
-        if c1.button("Generate Free UPC", use_container_width=True):
-            go_next("Generate for me", "upc", "AUTO")
-        with c2:
-            val = st.text_input("UPC", placeholder="12-13 Digits", label_visibility="collapsed", key=f"in_{step}")
-            if val and st.button("Set UPC"): go_next(val, "upc", val)
+    # (The widget will be rendered by Streamlit below this HTML block, 
+    # but visually appear inside due to layout flow or just below)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    elif step == 6:
-        if len(st.session_state.history) < 11: add_msg("assistant", "Record **Label** Name?")
-        c1, c2 = st.columns(2)
-        if c1.button(f"Use '{d['artist']}'", use_container_width=True):
-            go_next(d['artist'], "label", d['artist'])
-        with c2:
-            val = st.text_input("Label", placeholder="Label Name", label_visibility="collapsed", key=f"in_{step}")
-            if val and st.button("Set Label"): go_next(val, "label", val)
-
-    # === STEP 2: TRACK ROLES (The Smart Logic) ===
-    
-    elif step == 7: # COMPOSER START
-        if len(st.session_state.history) < 13: 
-            add_msg("assistant", "Let's add Credits. **Composers** (Songwriters).")
-            add_msg("assistant", f"Is **{d['artist']}** the composer?")
-        
-        c1, c2 = st.columns(2)
-        if c1.button("Yes, it's me", type="primary", use_container_width=True):
-            st.session_state.data['composers'].append(d['artist'])
-            go_next("Yes, I am the composer") # Jumps to step 8
-        if c2.button("No / Someone Else", use_container_width=True):
-            go_next("Someone Else") # Jumps to step 8
-
-    elif step == 8: # COMPOSER ADD MORE LOOP
-        # Check if we just added someone, or need to ask for name
-        last_msg = st.session_state.history[-1]['text']
-        
-        if last_msg == "Someone Else" or last_msg == "Add Another":
-            st.text_input("Legal First & Last Name", key="comp_input", on_change=lambda: add_list_item("composers", st.session_state.comp_input, 8))
-        else:
-            # We just added someone
-            st.success("Composer Added.")
-            add_msg("assistant", "Add another composer?")
-            c1, c2 = st.columns(2)
-            if c1.button("No, Done"): 
-                st.session_state.step = 9 # Go to Performers
-                st.rerun()
-            if c2.button("Add Another"):
-                add_msg("user", "Add Another")
-                st.rerun() # Reruns step 8 logic which catches "Add Another"
-
-    elif step == 9: # PERFORMER START
-        if len(st.session_state.history) < 17: add_msg("assistant", f"Did **{d['artist']}** perform on this track?")
-        c1, c2 = st.columns(2)
-        if c1.button("Yes", type="primary", use_container_width=True):
-            st.session_state.temp_name = d['artist']
-            st.session_state.step = 10 # Go to role picker
-            add_msg("user", "Yes")
-            st.rerun()
-        if c2.button("No / Someone Else", use_container_width=True):
-            st.session_state.step = 11 # Go to manual name input
-            add_msg("user", "Someone Else")
-            st.rerun()
-
-    elif step == 10: # PERFORMER ROLE PICKER
-        add_msg("assistant", f"What did **{st.session_state.temp_name}** play?")
-        roles = ["Vocals", "Guitar", "Bass", "Drums", "Keys", "Synth", "Other"]
-        cols = st.columns(4)
-        for i, r in enumerate(roles):
-            if cols[i%4].button(r, use_container_width=True):
-                st.session_state.data['performers'].append({"name": st.session_state.temp_name, "role": r})
-                # Go back to loop check
-                st.session_state.step = 12 
-                add_msg("user", r)
-                st.rerun()
-
-    elif step == 11: # PERFORMER MANUAL NAME
-        val = st.text_input("Performer Name", key="perf_input")
-        if st.button("Next"):
-            st.session_state.temp_name = val
-            st.session_state.step = 10 # Go to role picker
-            add_msg("user", val)
-            st.rerun()
-
-    elif step == 12: # PERFORMER LOOP CHECK
-        add_msg("assistant", "Add another performer?")
-        c1, c2 = st.columns(2)
-        if c1.button("Done", type="primary", use_container_width=True):
-            st.session_state.step = 13 # Go to Producers
-            st.rerun()
-        if c2.button("Add Another", use_container_width=True):
-            st.session_state.step = 11 # Back to manual name
-            add_msg("user", "Add Another")
-            st.rerun()
-
-    # === STEP 3: CONTENT & ASSETS ===
-
-    elif step == 13: # LANGUAGE
-        if len(st.session_state.history) < 25: add_msg("assistant", "What is the **Lyrics Language**?")
-        c1, c2 = st.columns(2)
-        if c1.button("English", use_container_width=True): go_next("English", "lang", "English")
-        if c2.button("Instrumental (No Lyrics)", use_container_width=True): go_next("Instrumental", "lang", "Instrumental")
-
-    elif step == 14: # EXPLICIT
-        if d['lang'] == "Instrumental":
-            st.session_state.step = 15 # Skip explicit check
-            st.rerun()
-        else:
-            msg, badge = get_edu_info("Explicit")
-            add_msg("assistant", f"Is the content **Explicit**?\n\n*💡 {msg}*", badge)
-            c1, c2 = st.columns(2)
-            if c1.button("Clean", use_container_width=True): go_next("Clean", "explicit", "Clean")
-            if c2.button("Explicit", use_container_width=True): go_next("Explicit", "explicit", "Explicit")
-
-    elif step == 15: # COVER ART
-        msg, badge = get_edu_info("Cover Art")
-        add_msg("assistant", f"Upload **Cover Art**.\n\n*💡 {msg}*", badge)
-        f = st.file_uploader("JPG/PNG 3000px", type=["jpg", "png"], key="cover_up")
-        if f:
-            st.session_state.data['cover'] = f
-            # Mock AI Check
-            with st.spinner("🤖 Vision AI checking for nudity/text..."):
-                time.sleep(1.5)
-            go_next("Uploaded Art")
-
-    elif step == 16: # AUDIO
-        add_msg("assistant", "Upload **Master Audio** (WAV/MP3).")
-        f = st.file_uploader("Audio File", type=["wav", "mp3"], key="audio_up")
-        if f:
-            st.session_state.data['audio'] = f
-             # Mock AI Check
-            with st.spinner("🎧 ACR Cloud scanning for copyright..."):
-                time.sleep(1.5)
-            go_next("Uploaded Audio")
-
-    elif step == 17: # REVIEW
-        st.success("🎉 All data collected!")
-        st.markdown("### 💿 Release Summary")
-        
-        # Clean Review Card
-        st.markdown(f"""
-        <div style="background:#fafafa; padding:20px; border-radius:10px; border:1px solid #ddd;">
-            <h3>{d['title']} <span style='font-size:0.6em; color:#666; border:1px solid #ccc; padding:2px 6px; border-radius:4px;'>{d['version'] or 'Original'}</span></h3>
-            <p><b>Artist:</b> {d['artist']}</p>
-            <p><b>Genre:</b> {d['genre']}</p>
-            <p><b>Label:</b> {d['label']}</p>
-            <p><b>UPC:</b> {d['upc']}</p>
-            <hr>
-            <p><b>Composers:</b> {', '.join(d['composers'])}</p>
-            <p><b>Performers:</b> {len(d['performers'])} Added</p>
-            <p><b>Explicit:</b> {d['explicit']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🚀 SUBMIT TO STORES", type="primary", use_container_width=True):
-            st.balloons()
-            st.success("Release Submitted Successfully!")
-
-# Helper for list adding to avoid code duplication
-def add_list_item(list_key, val, stay_step):
-    if val:
-        st.session_state.data[list_key].append(val)
-        add_msg("user", val)
-        st.session_state.step = stay_step # Stay on same step to trigger "Done/Add Another" logic
-        st.rerun()
-
-# --- 6. MAIN RENDER LOOP ---
+# --- 6. THE LOGIC FLOW ---
 
 init()
+d = st.session_state.data
+step = st.session_state.step
 
-# Sidebar
+# --- SIDEBAR (DRAFT) ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=140)
-    st.markdown("### Distribution AI")
+    st.markdown("### 💿 Release Draft")
     
-    st.markdown("**Education Mode**")
-    st.session_state.edu_mode = st.toggle("Enable AI Tutor", value=st.session_state.edu_mode)
-    
+    # Draft Table
+    fields = ["title", "version", "genre", "upc", "explicit"]
+    for f in fields:
+        val = d.get(f)
+        if val:
+            st.markdown(f"""
+            <div class="draft-item">
+                <span class="draft-label">{f.title()}</span>
+                <span class="draft-val">{val}</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    st.markdown(f"""
+    <div class="draft-item">
+        <span class="draft-label">Composers</span>
+        <span class="draft-val">{len(d['composers'])}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.divider()
-    if st.button("🔄 Reset Session"):
-        st.session_state.clear()
-        st.rerun()
+    st.session_state.edu_mode = st.toggle("🎓 AI Tutor Mode", value=st.session_state.edu_mode)
+    if st.button("Reset"): st.session_state.clear(); st.rerun()
 
-# Chat History
-st.markdown("<div style='margin-bottom: 120px;'>", unsafe_allow_html=True) # Spacer for fixed input
-for msg in st.session_state.history:
-    if msg['role'] == "assistant":
-        badge = f"<span class='ai-badge'>{msg['badge']}</span>" if msg['badge'] else ""
-        st.markdown(f"<div class='bot-msg'><b>Bot</b>{badge}<br>{msg['text']}</div>", unsafe_allow_html=True)
-    else:
-        st.markdown(f"<div class='user-msg'>{msg['text']}</div>", unsafe_allow_html=True)
-st.markdown("</div>", unsafe_allow_html=True)
+# --- MAIN AREA ---
 
-# Input Area (Fixed Bottom)
-if not st.session_state.edu_mode:
-    # Use container for visual separation
-    with st.container():
-        st.markdown("---")
-        render_step_logic()
-else:
-    # Education Chat Interface
-    user_q = st.chat_input("Ask a question about distribution...")
-    if user_q:
-        add_msg("user", user_q)
-        ans, badge = ask_ai(user_q)
-        add_msg("assistant", ans, badge)
-        st.rerun()
+# 1. Show History (Faded)
+render_history()
+
+# 2. Show Active Step (The Focus Card)
+
+# === STEP 1: TITLE ===
+if step == 1:
+    render_focus_card("What is the name of your song?", "This will be the main title on Spotify.")
+    
+    # Center the input visually using columns
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        val = st.text_input("Title", placeholder="e.g. Midnight City", label_visibility="collapsed")
+        st.write("") # Spacer
+        if st.button("Next ➝", type="primary"):
+            if val: next_step(val, "title", val)
+
+# === STEP 2: VERSION ===
+elif step == 2:
+    render_focus_card("Is this a special version?", "Like 'Radio Edit', 'Remix', or 'Live'.")
+    
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("No, it's the Original"): next_step("Original", "version", "")
+        st.write("--- OR ---")
+        val = st.text_input("Version", placeholder="e.g. Acoustic Version", label_visibility="collapsed")
+        if val and st.button("Confirm Version"): next_step(val, "version", val)
+
+# === STEP 3: GENRE ===
+elif step == 3:
+    render_focus_card("Select a primary genre.")
+    
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        genres = ["Hip Hop", "Pop", "Rock", "R&B", "Electronic", "Country", "Alternative", "Latin"]
+        cols = st.columns(2)
+        for i, g in enumerate(genres):
+            if cols[i%2].button(g, use_container_width=True):
+                next_step(g, "genre", g)
+
+# === STEP 4: DATE ===
+elif step == 4:
+    render_focus_card("When should this go live?")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("ASAP (As Soon As Possible)"): next_step("ASAP", "date", "ASAP")
+        st.markdown("<div style='text-align:center; color:#888; margin:10px;'>- OR -</div>", unsafe_allow_html=True)
+        dval = st.date_input("Pick Date", label_visibility="collapsed")
+        if st.button("Confirm Date"): next_step(str(dval), "date", str(dval))
+
+# === STEP 5: UPC ===
+elif step == 5:
+    render_focus_card("Do you have a UPC barcode?", "If not, we can generate one for free.", "UPC")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("Generate Free UPC", type="primary"): next_step("Generate Free", "upc", "AUTO")
+        val = st.text_input("UPC", placeholder="12-digit UPC", label_visibility="collapsed")
+        if val and st.button("Use My UPC"): next_step(val, "upc", val)
+
+# === STEP 6: LABEL ===
+elif step == 6:
+    render_focus_card("What Record Label is this under?", "Independent artists often use their own name.")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button(f"Use Artist Name ({d['artist']})"): next_step(d['artist'], "label", d['artist'])
+        val = st.text_input("Label", placeholder="Label Name", label_visibility="collapsed")
+        if val and st.button("Set Label"): next_step(val, "label", val)
+
+# === STEP 7: COMPOSER START ===
+elif step == 7:
+    render_focus_card("Credits: Who wrote this song?", "We need legal names for publishing royalties.", "Composers")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown(f"**Is {d['artist']} the songwriter?**")
+        if st.button("Yes, It's Me"): 
+            st.session_state.data['composers'].append(d['artist'])
+            next_step("Yes", jump_to=9) # Skip manual input
+        if st.button("No / Someone Else"): next_step("Someone Else") # Go to 8
+
+# === STEP 8: COMPOSER MANUAL ===
+elif step == 8:
+    render_focus_card("Enter the Composer's Legal Name", "First and Last name required.")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        val = st.text_input("Name", placeholder="e.g. John Smith", label_visibility="collapsed")
+        if val and st.button("Add Composer"): 
+            st.session_state.data['composers'].append(val)
+            next_step(val)
+
+# === STEP 9: COMPOSER LOOP ===
+elif step == 9:
+    render_focus_card("Composer Added.", "Do you need to add anyone else?")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("No, I'm Done", type="primary"): next_step("Done", jump_to=10)
+        if st.button("Add Another Composer"): next_step("Add Another", jump_to=8)
+
+# === STEP 10: PERFORMER START ===
+elif step == 10:
+    render_focus_card("Who performed on this track?", "Vocals, Instruments, etc.")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown(f"**Did {d['artist']} perform?**")
+        if st.button("Yes"): 
+            st.session_state.temp_name = d['artist']
+            next_step("Yes", jump_to=11)
+        if st.button("No / Someone Else"): next_step("No", jump_to=12)
+
+# === STEP 11: PERFORMER ROLE ===
+elif step == 11:
+    render_focus_card(f"What did {st.session_state.temp_name} play?")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        roles = ["Vocals", "Guitar", "Bass", "Drums", "Keys", "Other"]
+        cols = st.columns(2)
+        for r in roles:
+            if cols[0].button(r, use_container_width=True): 
+                st.session_state.data['performers'].append({"name":st.session_state.temp_name, "role":r})
+                next_step(r, jump_to=13)
+
+# === STEP 12: PERFORMER MANUAL ===
+elif step == 12:
+    render_focus_card("Enter Performer Name")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        val = st.text_input("Name", label_visibility="collapsed")
+        if val and st.button("Next"):
+            st.session_state.temp_name = val
+            next_step(val, jump_to=11)
+
+# === STEP 13: PERFORMER LOOP ===
+elif step == 13:
+    render_focus_card("Performer Added.", "Anyone else?")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("Done", type="primary"): next_step("Done", jump_to=14)
+        if st.button("Add Another"): next_step("Add", jump_to=12)
+
+# === STEP 14: LANGUAGE ===
+elif step == 14:
+    render_focus_card("Lyrics Language")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("English"): next_step("English", "lang", "English", jump_to=15)
+        if st.button("Instrumental (No Lyrics)"): next_step("Instrumental", "lang", "Instrumental", jump_to=16)
+
+# === STEP 15: EXPLICIT ===
+elif step == 15:
+    render_focus_card("Explicit Content", "Any profanity or mature themes?", "Explicit")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("Clean / Safe"): next_step("Clean", "explicit", "Clean")
+        if st.button("Explicit (Parental Advisory)"): next_step("Explicit", "explicit", "Explicit")
+
+# === STEP 16: FILES ===
+elif step == 16:
+    render_focus_card("Upload Cover Art", "3000x3000px JPG/PNG", "Cover Art")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        f = st.file_uploader("Cover", type=["jpg","png"], label_visibility="collapsed")
+        if f:
+            st.session_state.data['cover'] = f
+            with st.spinner("🤖 Vision AI checking artwork..."): time.sleep(1.5)
+            next_step("Uploaded Art")
+
+elif step == 17:
+    render_focus_card("Upload Master Audio", "WAV or MP3")
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        f = st.file_uploader("Audio", type=["wav","mp3"], label_visibility="collapsed")
+        if f:
+            st.session_state.data['audio'] = f
+            with st.spinner("🎧 Scanning audio copyright..."): time.sleep(1.5)
+            next_step("Uploaded Audio", jump_to=99)
+
+# === REVIEW ===
+elif step == 99:
+    render_focus_card("Release Ready!", "Please review your details below.")
+    
+    st.markdown("### 📝 Summary")
+    st.json(d)
+    
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        if st.button("🚀 SUBMIT TO STORES", type="primary"):
+            st.balloons()
+            st.success("Submitted!")
