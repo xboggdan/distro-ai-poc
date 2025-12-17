@@ -11,7 +11,7 @@ except ImportError:
     pass
 
 # --- 2. CONFIGURATION & STYLING ---
-st.set_page_config(page_title="BandLab Distribution V14", page_icon="🔥", layout="wide")
+st.set_page_config(page_title="BandLab Distribution V15", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
@@ -51,7 +51,10 @@ st.markdown("""
         align-items: flex-start;
         gap: 12px;
         box-shadow: 0 2px 5px rgba(251, 191, 36, 0.1);
+        animation: fadeIn 0.5s;
     }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    
     .edu-icon { font-size: 1.5em; line-height: 1; }
     .edu-content { flex: 1; }
     .edu-badge {
@@ -82,78 +85,69 @@ st.markdown("""
     
     .msg-row { display: flex; align-items: center; gap: 10px; font-size: 0.9em; }
     .msg-user { margin-left: auto; background: #FEE2E2; color: #991B1B; padding: 5px 12px; border-radius: 15px; }
-    .msg-bot { margin-right: auto; color: #666; font-style: italic; }
 
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. AI ENGINE (WITH FALLBACK) ---
+# --- 3. AI ENGINE (ROBUST FALLBACK) ---
 
-def ask_ai(prompt):
+def get_fallback_answer(topic):
+    """Hardcoded answers guaranteed to exist"""
+    kb = {
+        "Title": "Release Title is the name of your song or album. It must match the cover art exactly.",
+        "Version": "Versions allow you to distinguish 'Radio Edits', 'Remixes', or 'Live' recordings from the original.",
+        "Genre": "Genre metadata helps DSPs pitch your music to the correct editorial playlists.",
+        "Date": "Scheduling a release 2+ weeks in advance gives you time to pitch to Spotify editors.",
+        "UPC": "Universal Product Code (UPC) is the barcode used to track sales of your product.",
+        "Label": "The Record Label field determines what appears in the 'Source' line on Spotify.",
+        "Composers": "Publishing royalties are paid to songwriters. Legal First/Last names are required.",
+        "Performers": "Listing performers ensures credit accuracy in the DSP databases.",
+        "Language": "Language metadata routes your music to the correct regional teams at Apple/Spotify.",
+        "Explicit": "You must flag 'Explicit' if lyrics contain violence, drugs, or profanity.",
+        "Cover Art": "Art must be 3000x3000px JPG/PNG. No blurred images, URLs, or social handles.",
+        "Audio": "We recommend High-Res WAV files (16-bit/44.1kHz or higher) for best quality."
+    }
+    return kb.get(topic, "This metadata field is required for distribution."), "📚 Knowledge Base"
+
+def ask_ai(topic):
     """
-    Returns (Response_Text, Badge_Label)
+    Tries AI first, then falls back to internal database.
     """
-    sys_prompt = "You are a concise BandLab Distribution expert. Explain this concept in 1 sentence."
+    prompt = f"Explain what '{topic}' means in music distribution in 1 short sentence."
     
-    # 1. TRY AI API
+    # 1. TRY GROQ
     if "GROQ_API_KEY" in st.secrets:
         try:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
             res = client.chat.completions.create(
-                messages=[{"role":"system","content":sys_prompt},{"role":"user","content":prompt}],
+                messages=[{"role":"system","content":"You are a BandLab expert. Be concise."},{"role":"user","content":prompt}],
                 model="llama-3.3-70b-versatile"
             )
             return res.choices[0].message.content, "⚡ Llama 3"
         except: pass
 
-    # 2. INTERNAL DATABASE (FALLBACK)
-    # This ensures Education Mode ALWAYS works, even offline.
-    kb = {
-        "Title": "Titles should be the exact name of the song. Do not include 'feat.' or producer tags here.",
-        "Version": "Use 'Radio Edit' or 'Remix' to distinguish alternate takes. Leave blank for the original.",
-        "Genre": "This determines which playlists you will be pitched to. Choose the closest match.",
-        "Date": "We recommend scheduling 2 weeks in advance to allow time for playlist pitching.",
-        "UPC": "Universal Product Code: A barcode used to track sales of your product.",
-        "Label": "The name that appears in the 'Source' field on Spotify. Independent artists often use their own name.",
-        "Composers": "Streaming services require legal First and Last names to pay publishing royalties.",
-        "Performers": "List everyone who played an instrument or sang. This helps with credit database accuracy.",
-        "Language": "This helps us route your music to the correct regional editors.",
-        "Explicit": "You must mark content as Explicit if it contains profanity, violence, or drug references.",
-        "Cover Art": "Art must be 3000x3000px. No URLs, pricing, or social media handles allowed.",
-        "Audio": "We accept WAV or MP3 (320kbps). High quality audio ensures the best listener experience."
-    }
-    
-    # Simple keyword match if prompt contains key
-    for key, val in kb.items():
-        if key in prompt:
-            return val, "📚 Knowledge Base"
-            
-    return "This helps ensure your metadata meets DSP standards.", "⚙️ Logic"
+    # 2. TRY GEMINI
+    if "GEMINI_API_KEY" in st.secrets:
+        try:
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            res = model.generate_content(prompt)
+            return res.text, "✨ Gemini"
+        except: pass
 
-def get_edu_context(step_key):
-    """Generates the education tip text"""
-    if not st.session_state.edu_mode: return None
-    
-    # Map step keys to questions
-    prompts = {
-        "Title": "Explain 'Release Title' rules for Spotify.",
-        "Version": "What is a 'Version' in music metadata?",
-        "Genre": "Why is genre selection important for distribution?",
-        "Date": "Why should I schedule a release date in advance?",
-        "UPC": "What is a UPC code?",
-        "Label": "What is a Record Label name field used for?",
-        "Composers": "Why do I need legal names for Composers?",
-        "Performers": "Who counts as a Performer on a track?",
-        "Language": "Why does Spotify need the lyrics language?",
-        "Explicit": "What are the rules for Explicit content?",
-        "Cover Art": "What are the requirements for Cover Art?",
-        "Audio": "What audio format is best for distribution?"
-    }
-    
-    if step_key in prompts:
-        txt, badge = ask_ai(prompts[step_key])
-        return txt, badge
-    return None, None
+    # 3. TRY GPT
+    if "OPENAI_API_KEY" in st.secrets:
+        try:
+            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            res = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role":"system","content":"You are a BandLab expert. Be concise."},{"role":"user","content":prompt}]
+            )
+            return res.choices[0].message.content, "🧠 GPT-4"
+        except: pass
+
+    # 4. FALLBACK (If no keys or offline)
+    return get_fallback_answer(topic)
 
 # --- 4. STATE MANAGEMENT ---
 
@@ -201,7 +195,6 @@ def next_step(user_val=None, key=None, save_val=None, jump_to=None):
 def render_history():
     if not st.session_state.history: return
     st.markdown("<div class='history-log'>", unsafe_allow_html=True)
-    # Show last 3 items to keep context but keep it clean
     for msg in st.session_state.history[-3:]:
         if msg['role'] == "user":
             st.markdown(f"<div class='msg-row'><div class='msg-user'>{msg['text']}</div></div>", unsafe_allow_html=True)
@@ -211,17 +204,18 @@ def render_focus_card(title, subtitle=None, context_key=None):
     # 1. Calculate Education Tip
     tip_html = ""
     if st.session_state.edu_mode and context_key:
-        txt, badge = get_edu_context(context_key)
-        if txt:
-            tip_html = f"""
-            <div class="edu-container">
-                <div class="edu-icon">🎓</div>
-                <div class="edu-content">
-                    <b>Did you know?</b><br>{txt}
-                    <span class="edu-badge">{badge}</span>
-                </div>
+        # We call the robust ask_ai function here
+        txt, badge = ask_ai(context_key)
+        
+        tip_html = f"""
+        <div class="edu-container">
+            <div class="edu-icon">🎓</div>
+            <div class="edu-content">
+                <b>Learn Mode:</b> {txt}
+                <span class="edu-badge">{badge}</span>
             </div>
-            """
+        </div>
+        """
 
     # 2. Render Card
     st.markdown(f"""
@@ -231,8 +225,6 @@ def render_focus_card(title, subtitle=None, context_key=None):
         {tip_html}
     """, unsafe_allow_html=True)
     
-    # The actual widget will be rendered below this function call, 
-    # but inside the div visually due to layout
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- 6. LOGIC FLOW ---
