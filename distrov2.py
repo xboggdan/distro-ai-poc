@@ -10,55 +10,167 @@ try:
 except ImportError:
     pass
 
-# --- 2. CONFIGURATION & STYLING ---
+# --- 2. CONFIGURATION & VISUAL STYLING ---
 st.set_page_config(page_title="BandLab Distribution AI", page_icon="🔥", layout="centered")
 
 st.markdown("""
 <style>
-    /* GLOBAL THEME */
-    .stApp { background-color: #ffffff; color: #222; font-family: -apple-system, sans-serif; }
+    /* --- 1. RESET & THEME FORCING (Fixes Dark Mode Issues) --- */
+    .stApp {
+        background-color: #FFFFFF;
+        color: #333333 !important; /* Forces dark text even if user is in Dark Mode */
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
     
-    /* CHAT BUBBLES */
-    .stChatMessage {
-        background-color: #f9f9f9;
-        border: 1px solid #eee;
+    /* Hide Streamlit Boilerplate */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* --- 2. CHAT BUBBLES --- */
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-bottom: 30px;
+    }
+    
+    .bubble {
+        padding: 12px 18px;
+        border-radius: 18px;
+        font-size: 15px;
+        line-height: 1.5;
+        max-width: 85%;
+        position: relative;
+        animation: fadeIn 0.3s ease;
+    }
+    
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    
+    /* User Bubble (Right, Red) */
+    .user-bubble {
+        background-color: #F50000;
+        color: white !important;
+        align-self: flex-end;
+        border-bottom-right-radius: 4px;
+        margin-left: auto;
+        box-shadow: 0 2px 5px rgba(245,0,0,0.2);
+    }
+    
+    /* Bot Bubble (Left, Grey) */
+    .bot-bubble {
+        background-color: #F3F4F6;
+        color: #1F2937 !important;
+        align-self: flex-start;
+        border-bottom-left-radius: 4px;
+        margin-right: auto;
+        border: 1px solid #E5E7EB;
+    }
+    
+    /* --- 3. EDUCATIONAL INSIGHT CARD --- */
+    .edu-card {
+        background-color: #FFFBEB;
+        border: 1px solid #FCD34D;
+        color: #92400E !important;
+        padding: 12px 16px;
         border-radius: 12px;
-        padding: 10px;
+        font-size: 14px;
+        margin-top: -5px;
         margin-bottom: 10px;
+        align-self: flex-start;
+        max-width: 85%;
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
     }
-    
-    /* AI BADGES */
+    .edu-icon { font-size: 16px; margin-top: 2px; }
     .ai-badge {
-        font-size: 0.7em; padding: 2px 8px; border-radius: 10px;
-        background: #e0e0e0; color: #555; font-weight: bold;
-        display: inline-block; margin-left: 8px; font-family: monospace;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background: rgba(0,0,0,0.05);
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 8px;
+        font-weight: bold;
     }
-    
-    /* BANDLAB BUTTONS */
+
+    /* --- 4. INPUT AREA STYLING --- */
+    /* Make buttons look clickable and high-end */
     .stButton > button {
-        border-radius: 20px; font-weight: 600;
-        border: 1px solid #ddd; background-color: white; color: #333;
-        transition: 0.2s; width: 100%; margin-bottom: 5px;
+        border: 1px solid #E5E7EB;
+        background-color: #FFFFFF;
+        color: #374151 !important;
+        border-radius: 12px;
+        padding: 12px 20px;
+        font-weight: 600;
+        width: 100%;
+        transition: all 0.2s;
     }
     .stButton > button:hover {
-        border-color: #F50000; color: #F50000; background-color: #fff5f5;
+        border-color: #F50000;
+        color: #F50000 !important;
+        background-color: #FFF5F5;
+        transform: translateY(-1px);
     }
-    
-    /* Hide Streamlit Footer */
-    footer {visibility: hidden;}
-    
+    .stTextInput > div > div > input {
+        border-radius: 12px;
+        border: 1px solid #E5E7EB;
+        padding: 10px 15px;
+        color: #333 !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. AI ENGINE (ROBUST) ---
+# --- 3. AI ENGINE (ROBUST & SILENT FALLBACK) ---
 
-def ask_ai(prompt):
+def get_fallback_answer(topic):
+    """Hardcoded answers guaranteed to exist if AI fails"""
+    kb = {
+        "S1_TITLE": "Your Release Title must match the cover art exactly. Do not include 'feat.' or producer tags in the main title.",
+        "S1_VERSION": "Versions distinguish this release from the original, such as 'Radio Edit', 'Remix', or 'Instrumental'.",
+        "S1_GENRE": "Selecting the correct primary Genre ensures your music is pitched to the right editorial playlists.",
+        "S1_DATE": "We recommend scheduling your release at least 2 weeks in advance to allow time for playlist pitching.",
+        "S1_UPC": "A UPC (Universal Product Code) is a barcode used to track sales of your product across all stores.",
+        "S1_LABEL": "The Record Label name appears in the 'Source' line on Spotify. Independent artists often use their own name.",
+        "S2_COMP_START": "Streaming services pay publishing royalties to songwriters. Legal names are required to collect this money.",
+        "S2_PERF_START": "Listing performers (instrumentalists/vocalists) ensures accurate credits in the global music database.",
+        "S2_LANG": "Specifying the lyrics language helps DSPs route your music to the correct regional moderation teams.",
+        "S2_EXPL": "You must mark a track as Explicit if it contains profanity, violence, or references to drug use.",
+        "S3_COVER": "Cover Art must be 3000x3000px JPG or PNG. No blurred images, URLs, pricing, or social handles allowed.",
+        "S3_AUDIO": "For best quality, upload High-Res WAV files (16-bit/44.1kHz or higher). MP3s are accepted but less ideal."
+    }
+    # Default fallback
+    return kb.get(topic, "This metadata field is required for correct distribution."), "Knowledge Base"
+
+def ask_ai(step_id):
     """
     Returns (Response_Text, Source_Label)
     """
-    sys_prompt = "You are a concise BandLab Distribution expert. Explain in 1-2 short sentences."
+    # Map step ID to a human-readable prompt
+    prompts = {
+        "S1_TITLE": "Explain 'Release Title' rules for Spotify.",
+        "S1_VERSION": "What is a 'Version' in music metadata?",
+        "S1_GENRE": "Why is genre selection important?",
+        "S1_DATE": "Why schedule a release date in advance?",
+        "S1_UPC": "What is a UPC code?",
+        "S1_LABEL": "What is a Record Label name used for?",
+        "S2_COMP_START": "Why do I need legal names for Composers?",
+        "S2_PERF_START": "Who counts as a Performer?",
+        "S2_LANG": "Why does Spotify need lyrics language?",
+        "S2_EXPL": "Rules for Explicit content?",
+        "S3_COVER": "Requirements for Cover Art?",
+        "S3_AUDIO": "Best audio format for distribution?"
+    }
     
-    # 1. Groq (Llama 3)
+    prompt = prompts.get(step_id)
+    if not prompt:
+        return None, None
+
+    sys_prompt = "You are a concise BandLab Distribution expert. Explain in 1 sentence."
+
+    # 1. Groq
     if "GROQ_API_KEY" in st.secrets:
         try:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -89,48 +201,8 @@ def ask_ai(prompt):
             return res.choices[0].message.content, "GPT-4"
         except: pass
 
-    # 4. Fallback Database
-    kb = {
-        "Title": "The Release Title must match your cover art exactly. Avoid adding 'feat.' or producer tags here.",
-        "Version": "Versions allow you to distinguish 'Radio Edits', 'Remixes', or 'Live' recordings from the original.",
-        "Genre": "Genre metadata helps DSPs pitch your music to the correct editorial playlists.",
-        "Date": "Scheduling a release 2+ weeks in advance gives you time to pitch to Spotify editors.",
-        "UPC": "Universal Product Code (UPC) is the barcode used to track sales of your product.",
-        "Label": "The Record Label field determines what appears in the 'Source' line on Spotify.",
-        "Composers": "Publishing royalties are paid to songwriters. Legal First/Last names are required.",
-        "Performers": "Listing performers ensures credit accuracy in the DSP databases.",
-        "Language": "Language metadata routes your music to the correct regional teams at Apple/Spotify.",
-        "Explicit": "You must flag 'Explicit' if lyrics contain violence, drugs, or profanity.",
-        "Cover Art": "Art must be 3000x3000px JPG/PNG. No blurred images, URLs, or social handles.",
-        "Audio": "We recommend High-Res WAV files (16-bit/44.1kHz or higher) for best quality."
-    }
-    # Keyword Search
-    for k, v in kb.items():
-        if k in prompt: return v, "Knowledge Base"
-        
-    return "This field is required for distribution metadata.", "Logic"
-
-def get_edu_context(step_name):
-    """Generates the education tip text"""
-    # Map step keys to questions
-    prompts = {
-        "S1_TITLE": "Explain 'Release Title' rules for Spotify.",
-        "S1_VERSION": "What is a 'Version' in music metadata?",
-        "S1_GENRE": "Why is genre selection important for distribution?",
-        "S1_DATE": "Why should I schedule a release date in advance?",
-        "S1_UPC": "What is a UPC code?",
-        "S1_LABEL": "What is a Record Label name field used for?",
-        "S2_COMP_START": "Why do I need legal names for Composers?",
-        "S2_PERF_START": "Who counts as a Performer on a track?",
-        "S2_LANG": "Why does Spotify need the lyrics language?",
-        "S2_EXPL": "What are the rules for Explicit content?",
-        "S3_COVER": "What are the requirements for Cover Art?",
-        "S3_AUDIO": "What audio format is best for distribution?"
-    }
-    
-    if step_name in prompts:
-        return ask_ai(prompts[step_name])
-    return None, None
+    # 4. Fallback
+    return get_fallback_answer(step_id)
 
 # --- 4. STATE MANAGEMENT ---
 
@@ -152,18 +224,20 @@ def init():
             "temp_name": ""
         })
 
-def add_msg(role, content, badge=None):
-    st.session_state.messages.append({"role": role, "content": content, "badge": badge})
+def add_msg(role, content, is_edu=False, badge=None):
+    st.session_state.messages.append({
+        "role": role, 
+        "content": content, 
+        "is_edu": is_edu,
+        "badge": badge
+    })
 
 def process_input(user_text=None, next_step_id=None, bot_text=None, data_key=None, data_val=None, list_append=None):
-    """
-    Main Logic Processor
-    """
-    # 1. Record User Input
+    # 1. Record User
     if user_text:
         add_msg("user", user_text)
     
-    # 2. Update Data
+    # 2. Save Data
     if data_key:
         st.session_state.data[data_key] = data_val
     if list_append:
@@ -172,28 +246,55 @@ def process_input(user_text=None, next_step_id=None, bot_text=None, data_key=Non
     # 3. Advance Step
     if next_step_id:
         st.session_state.step = next_step_id
-        
-        # 4. Add Bot Question
         add_msg("assistant", bot_text)
         
-        # 5. TRIGGER EDUCATION (If Mode On)
+        # 4. Trigger Edu Mode
         if st.session_state.edu_mode:
-            tip, source = get_edu_context(next_step_id)
-            if tip:
-                add_msg("assistant", f"ℹ️ **Learn Mode:** {tip}", badge=source)
+            explanation, source = ask_ai(next_step_id)
+            if explanation:
+                add_msg("assistant", explanation, is_edu=True, badge=source)
     
     st.rerun()
 
-# --- 5. MAIN APP ---
+# --- 5. UI COMPONENTS (HTML RENDERING) ---
+
+def render_chat():
+    chat_html = '<div class="chat-container">'
+    
+    for msg in st.session_state.messages:
+        # User Message
+        if msg['role'] == "user":
+            chat_html += f'<div class="bubble user-bubble">{msg["content"]}</div>'
+        
+        # Educational Insight Card
+        elif msg.get('is_edu'):
+            chat_html += f"""
+            <div class="edu-card">
+                <div class="edu-icon">💡</div>
+                <div>
+                    {msg['content']}
+                    <span class="ai-badge">⚡ {msg['badge']}</span>
+                </div>
+            </div>
+            """
+        
+        # Bot Message
+        else:
+            chat_html += f'<div class="bubble bot-bubble">{msg["content"]}</div>'
+            
+    chat_html += '</div>'
+    st.markdown(chat_html, unsafe_allow_html=True)
+
+# --- 6. MAIN APP FLOW ---
 
 init()
 
 # SIDEBAR
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=140)
-    st.markdown("### 🤖 Agent Settings")
     
-    # Toggle Education
+    # Edu Toggle
+    st.markdown("### 🎓 Learning Mode")
     mode = st.toggle("Enable AI Tips", value=st.session_state.edu_mode)
     if mode != st.session_state.edu_mode:
         st.session_state.edu_mode = mode
@@ -204,16 +305,13 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# CHAT RENDERING
+# TITLE
 st.title("BandLab Distribution AI")
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg.get("badge"):
-            st.markdown(f"<span class='ai-badge'>⚡ {msg['badge']}</span>", unsafe_allow_html=True)
+# RENDER CHAT HISTORY
+render_chat()
 
-# INPUT HANDLING
+# INPUT LOGIC
 step = st.session_state.step
 d = st.session_state.data
 
@@ -242,7 +340,6 @@ elif step == "S1_GENRE":
 elif step == "S1_DATE":
     if st.button("ASAP (As Soon As Possible)"):
         process_input("ASAP", "S1_UPC", "Do you have a **UPC Barcode**?", "date", "ASAP")
-    # Date picker fallback
     dval = st.date_input("Or Pick Date", label_visibility="collapsed")
     if st.button("Confirm Date"):
         process_input(str(dval), "S1_UPC", "Do you have a **UPC Barcode**?", "date", str(dval))
@@ -265,7 +362,6 @@ elif step == "S1_LABEL":
 elif step == "S2_COMP_START":
     c1, c2 = st.columns(2)
     if c1.button("Yes, It's Me"):
-        # Add artist and skip manual input
         st.session_state.data['composers'].append(d['artist'])
         process_input("Yes", "S2_COMP_LOOP", "Composer added. Do you need to add anyone else?")
     if c2.button("No / Someone Else"):
@@ -299,7 +395,6 @@ elif step == "S2_PERF_ROLE":
     cols = st.columns(3)
     for i, r in enumerate(roles):
         if cols[i%3].button(r, use_container_width=True):
-            # Add performer logic manually here to handle dictionary
             st.session_state.data['performers'].append({"name": st.session_state.temp_name, "role": r})
             process_input(r, "S2_PERF_LOOP", "Performer added. Anyone else?")
 
