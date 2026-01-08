@@ -80,9 +80,9 @@ def call_llm_agent(messages, current_data):
     GOAL: Fill all REQUIRED fields ({req_fields}) first. Group OPTIONAL fields ({opt_fields}) at the end.
     
     LOGIC RULES:
-    1. **Solo Artist Shortcut:** If the user implies they did everything (e.g. "I wrote and produced it" or "Yes, it's all me"), update 'composers', 'performers', AND 'producers' with the Main Artist's name.
-    2. **Lyrics/Explicit:** If user says "It's instrumental", set 'explicit' to "Clean" and 'lang' to "Instrumental". If not, ask for Language AND Explicit rating together.
-    3. **Extraction:** Extract as much as possible from every user message.
+    1. **Solo Artist Shortcut:** If the user implies they did everything, update 'composers', 'performers', AND 'producers' with the Main Artist's name.
+    2. **Editing:** If the user says "Change X to Y" or "Remove X", update the state accordingly. Send null or empty list to clear fields.
+    3. **Education:** If the user asks a question ("What is X?"), explain it simply in 1 sentence, THEN immediately ask if they want to proceed with that field (e.g., "Do you want me to generate one?").
     4. **Persona:** Efficient, helpful, smart.
     
     OUTPUT JSON FORMAT:
@@ -130,11 +130,14 @@ def mock_logic_fallback(text, data):
     # Simple keyword extraction mock
     if "title" in text: updates["title"] = "Extracted Title"
     if "hip hop" in text: updates["genre"] = "Hip Hop"
-    if "yes" in text and not data["composers"]:
-        updates["composers"] = [data["artist"]]
-        updates["performers"] = [data["artist"]]
-        updates["producers"] = [data["artist"]]
-        return {"response": "Great! I've credited you for everything. Does the track have lyrics?", "updates": updates}
+    if "isrc" in text and "?" in text:
+        return {"response": "An ISRC is a unique ID for your track. I can generate one for free. Do you want that?", "updates": {}}
+    if "generate" in text:
+        updates["isrc"] = "US-S1Z-24-00001"
+        return {"response": "Done! Generated ISRC: US-S1Z-24-00001. Ready for cover art?", "updates": updates}
+    if "remove" in text:
+        updates["performers"] = [data["artist"]] # Reset to just artist
+        return {"response": "Removed the featured artist.", "updates": updates}
         
     return {"response": "I am offline (No Keys). Please enter keys or use Demo Mode.", "updates": updates}
 
@@ -153,7 +156,7 @@ def init_state():
                 "composers": [],
                 "performers": [],
                 "producers": [],
-                "explicit": None, # Covers "Language" logic too
+                "explicit": None, 
                 # OPTIONAL
                 "version": None,
                 "label": None,
@@ -180,9 +183,9 @@ def process_input(user_input):
         updates = result.get("updates", {})
         for k, v in updates.items():
             if k in st.session_state.data:
-                # Handle lists specifically
+                # Handle lists specifically (if AI sends string instead of list, wrap it)
                 if isinstance(st.session_state.data[k], list) and not isinstance(v, list):
-                    st.session_state.data[k] = [v]
+                    st.session_state.data[k] = [v] if v else []
                 else:
                     st.session_state.data[k] = v
         
@@ -195,9 +198,8 @@ def process_input(user_input):
 
 def render_status_row(label, value, required=True):
     status_class = "badge-req" if required and not value else "badge-done" if value else "badge-opt"
-    status_text = "✓ DONE" if value else "⭕ REQUIRED" if required else "OPTIONAL"
     
-    # Handle list types (credits)
+    # Text Logic
     if isinstance(value, list):
         if len(value) > 0:
             status_text = f"✓ {len(value)} ADDED"
@@ -205,6 +207,15 @@ def render_status_row(label, value, required=True):
         elif required:
             status_text = "⭕ REQUIRED"
             status_class = "badge-req"
+        else:
+            status_text = "OPTIONAL"
+            
+    elif value:
+        status_text = "✓ DONE"
+    elif required:
+        status_text = "⭕ REQUIRED"
+    else:
+        status_text = "OPTIONAL"
             
     st.markdown(f"""
     <div class="field-row">
@@ -224,7 +235,7 @@ def render_dashboard():
     render_status_row("Genre", d['genre'])
     render_status_row("Release Date", d['date'])
     
-    # SECTION 2: CREDITS (THE SMART GROUP)
+    # SECTION 2: CREDITS
     st.markdown("<div class='status-header'>2. Credits</div>", unsafe_allow_html=True)
     render_status_row("Composers", d['composers'])
     render_status_row("Performers", d['performers'])
@@ -256,21 +267,43 @@ def trigger_demo(scenario):
     init_state() 
     
     if scenario == "1":
-        # ONE-SHOT EXTRACTION
+        # ONE-SHOT
         process_input("I want to release a Hip Hop single called 'Empire' by xboggdan dropping ASAP.")
     
     elif scenario == "2":
         # SOLO ARTIST SHORTCUT
         st.session_state.data.update({"title": "Empire", "genre": "Hip Hop", "date": "ASAP"})
         st.session_state.messages.append({"role": "assistant", "content": "Metadata set. Now for credits: Are you the sole writer, performer, and producer?"})
-        # Simulating the smart answer
         process_input("Yes, I did everything myself.")
         
-    elif scenario == "3":
-        # OPTIONAL SWEEP
-        st.session_state.data.update({"title": "Empire", "genre": "Hip Hop", "composers":["Me"], "performers":["Me"], "producers":["Me"], "explicit":"Clean"})
-        st.session_state.messages.append({"role": "assistant", "content": "Credits done. Finally, do you have a specific Label, UPC, or ISRC?"})
-        process_input("No, just auto-generate them and use my name for the label.")
+    elif scenario == "4":
+        # COMPLEX EDITING (Indecisive User)
+        # 1. Set initial state
+        st.session_state.data.update({"title": "Midnight Blue", "genre": "Pop"})
+        st.session_state.messages.append({"role": "assistant", "content": "Draft created: 'Midnight Blue' (Pop)."})
+        
+        # 2. User changes mind on title
+        process_input("Actually, change the title to 'Neon Lights'.")
+        
+        # 3. User adds a feature
+        st.session_state.messages.append({"role": "assistant", "content": "Title updated to 'Neon Lights'. Any featured artists?"})
+        process_input("Yeah, add 'Drake' as a featured vocalist.")
+        
+        # 4. User removes feature (Simulated via next input for flow speed, or distinct steps)
+        # In a real demo, you'd click this button multiple times or split it. 
+        # Here we simulate the final state of indecision leading to a result.
+        time.sleep(1)
+        st.session_state.messages.append({"role": "assistant", "content": "Added Drake. Anything else?"})
+        process_input("Actually, remove Drake. I want to keep it solo.")
+
+    elif scenario == "5":
+        # EDUCATIONAL INTERRUPT
+        st.session_state.data.update({"title": "Empire", "genre": "Hip Hop"})
+        st.session_state.messages.append({"role": "assistant", "content": "Got it. Do you have an ISRC code for this track?"})
+        
+        # User asks question
+        process_input("Wait, what is an ISRC? I'm new to this.")
+        # Bot should explain AND ask to generate in response (Handled by LLM Prompt)
 
 # --- 7. MAIN APP FLOW ---
 
@@ -283,10 +316,11 @@ with st.sidebar:
     render_dashboard()
     
     st.divider()
-    st.markdown("### ⚡ Demo Scenarios")
+    st.markdown("### ⚡ Complex Demo Flows")
     if st.button("Scenario 1: One-Shot Entry"): trigger_demo("1")
-    if st.button("Scenario 2: The 'Solo Artist' Shortcut"): trigger_demo("2")
-    if st.button("Scenario 3: Optional Field Sweep"): trigger_demo("3")
+    if st.button("Scenario 2: 'Solo Artist' Shortcut"): trigger_demo("2")
+    if st.button("Scenario 4: The 'Indecisive Artist' (Edits)"): trigger_demo("4")
+    if st.button("Scenario 5: 'Curious Beginner' (Edu Flow)"): trigger_demo("5")
     
     st.divider()
     if st.button("Reset"): st.session_state.clear(); st.rerun()
@@ -295,7 +329,7 @@ with st.sidebar:
 st.title("BandLab Distribution AI")
 render_chat()
 
-# ASSET UPLOAD (Only appears when core data is set)
+# ASSET UPLOAD
 if st.session_state.data.get("title"):
     with st.expander("📂 Asset Upload Zone", expanded=True):
         c1, c2 = st.columns(2)
