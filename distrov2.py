@@ -1,6 +1,6 @@
 import streamlit as st
+import json
 import time
-import uuid
 
 # --- 1. SETUP & IMPORTS ---
 try:
@@ -10,199 +10,113 @@ try:
 except ImportError:
     pass
 
-# --- 2. CONFIGURATION & VISUAL STYLING ---
-st.set_page_config(page_title="BandLab Distribution AI", page_icon="🔥", layout="centered")
+# --- 2. CONFIGURATION ---
+st.set_page_config(page_title="BandLab AI Agent", page_icon="🔥", layout="centered")
 
 st.markdown("""
 <style>
-    /* --- 1. RESET & THEME FORCING (Fixes Dark Mode Issues) --- */
-    .stApp {
-        background-color: #FFFFFF;
-        color: #333333 !important; /* Forces dark text even if user is in Dark Mode */
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
+    .stApp { background-color: #FFFFFF; color: #333; font-family: -apple-system, sans-serif; }
     
-    /* Hide Streamlit Boilerplate */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* --- 2. CHAT BUBBLES --- */
-    .chat-container {
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-        margin-bottom: 30px;
-    }
-    
-    .bubble {
-        padding: 12px 18px;
-        border-radius: 18px;
-        font-size: 15px;
-        line-height: 1.5;
-        max-width: 85%;
-        position: relative;
-        animation: fadeIn 0.3s ease;
-    }
-    
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    
-    /* User Bubble (Right, Red) */
+    /* CHAT STYLING */
     .user-bubble {
-        background-color: #F50000;
-        color: white !important;
-        align-self: flex-end;
-        border-bottom-right-radius: 4px;
-        margin-left: auto;
+        background: #F50000; color: white; padding: 10px 15px; border-radius: 18px 18px 0 18px;
+        margin: 5px 0 5px auto; max-width: 80%; width: fit-content;
         box-shadow: 0 2px 5px rgba(245,0,0,0.2);
     }
-    
-    /* Bot Bubble (Left, Grey) */
     .bot-bubble {
-        background-color: #F3F4F6;
-        color: #1F2937 !important;
-        align-self: flex-start;
-        border-bottom-left-radius: 4px;
-        margin-right: auto;
+        background: #F3F4F6; color: #1F2937; padding: 10px 15px; border-radius: 18px 18px 18px 0;
+        margin: 5px auto 5px 0; max-width: 80%; width: fit-content;
         border: 1px solid #E5E7EB;
     }
     
-    /* --- 3. EDUCATIONAL INSIGHT CARD --- */
-    .edu-card {
-        background-color: #FFFBEB;
-        border: 1px solid #FCD34D;
-        color: #92400E !important;
-        padding: 12px 16px;
-        border-radius: 12px;
-        font-size: 14px;
-        margin-top: -5px;
-        margin-bottom: 10px;
-        align-self: flex-start;
-        max-width: 85%;
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
+    /* DASHBOARD (SIDEBAR) */
+    .draft-box {
+        padding: 10px; background: #fafafa; border-radius: 8px; margin-bottom: 5px;
+        border: 1px solid #eee; font-size: 0.9em; display: flex; justify-content: space-between;
     }
-    .edu-icon { font-size: 16px; margin-top: 2px; }
-    .ai-badge {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        background: rgba(0,0,0,0.05);
-        padding: 2px 6px;
-        border-radius: 4px;
-        margin-left: 8px;
-        font-weight: bold;
-    }
-
-    /* --- 4. INPUT AREA STYLING --- */
-    /* Make buttons look clickable and high-end */
-    .stButton > button {
-        border: 1px solid #E5E7EB;
-        background-color: #FFFFFF;
-        color: #374151 !important;
-        border-radius: 12px;
-        padding: 12px 20px;
-        font-weight: 600;
-        width: 100%;
-        transition: all 0.2s;
-    }
-    .stButton > button:hover {
-        border-color: #F50000;
-        color: #F50000 !important;
-        background-color: #FFF5F5;
-        transform: translateY(-1px);
-    }
-    .stTextInput > div > div > input {
-        border-radius: 12px;
-        border: 1px solid #E5E7EB;
-        padding: 10px 15px;
-        color: #333 !important;
-    }
-
+    .missing { color: #F50000; font-weight: bold; }
+    .filled { color: #10B981; font-weight: bold; }
+    
+    /* HIDE STREAMLIT UI */
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. AI ENGINE (ROBUST & SILENT FALLBACK) ---
+# --- 3. THE LLM BRAIN (INTENT & EXTRACTION) ---
 
-def get_fallback_answer(topic):
-    """Hardcoded answers guaranteed to exist if AI fails"""
-    kb = {
-        "S1_TITLE": "Your Release Title must match the cover art exactly. Do not include 'feat.' or producer tags in the main title.",
-        "S1_VERSION": "Versions distinguish this release from the original, such as 'Radio Edit', 'Remix', or 'Instrumental'.",
-        "S1_GENRE": "Selecting the correct primary Genre ensures your music is pitched to the right editorial playlists.",
-        "S1_DATE": "We recommend scheduling your release at least 2 weeks in advance to allow time for playlist pitching.",
-        "S1_UPC": "A UPC (Universal Product Code) is a barcode used to track sales of your product across all stores.",
-        "S1_LABEL": "The Record Label name appears in the 'Source' line on Spotify. Independent artists often use their own name.",
-        "S2_COMP_START": "Streaming services pay publishing royalties to songwriters. Legal names are required to collect this money.",
-        "S2_PERF_START": "Listing performers (instrumentalists/vocalists) ensures accurate credits in the global music database.",
-        "S2_LANG": "Specifying the lyrics language helps DSPs route your music to the correct regional moderation teams.",
-        "S2_EXPL": "You must mark a track as Explicit if it contains profanity, violence, or references to drug use.",
-        "S3_COVER": "Cover Art must be 3000x3000px JPG or PNG. No blurred images, URLs, pricing, or social handles allowed.",
-        "S3_AUDIO": "For best quality, upload High-Res WAV files (16-bit/44.1kHz or higher). MP3s are accepted but less ideal."
-    }
-    # Default fallback
-    return kb.get(topic, "This metadata field is required for correct distribution."), "Knowledge Base"
-
-def ask_ai(step_id):
+def call_llm(messages, model_type="auto"):
     """
-    Returns (Response_Text, Source_Label)
+    Sends chat history to LLM. 
+    Returns the raw text response.
     """
-    # Map step ID to a human-readable prompt
-    prompts = {
-        "S1_TITLE": "Explain 'Release Title' rules for Spotify.",
-        "S1_VERSION": "What is a 'Version' in music metadata?",
-        "S1_GENRE": "Why is genre selection important?",
-        "S1_DATE": "Why schedule a release date in advance?",
-        "S1_UPC": "What is a UPC code?",
-        "S1_LABEL": "What is a Record Label name used for?",
-        "S2_COMP_START": "Why do I need legal names for Composers?",
-        "S2_PERF_START": "Who counts as a Performer?",
-        "S2_LANG": "Why does Spotify need lyrics language?",
-        "S2_EXPL": "Rules for Explicit content?",
-        "S3_COVER": "Requirements for Cover Art?",
-        "S3_AUDIO": "Best audio format for distribution?"
-    }
+    # System Prompt: Defines the persona and the goal
+    system_prompt = """
+    You are 'DistroBot', an expert A&R Agent for BandLab.
+    Your goal is to help the user prepare a music release (Single/Album) for Spotify.
     
-    prompt = prompts.get(step_id)
-    if not prompt:
-        return None, None
-
-    sys_prompt = "You are a concise BandLab Distribution expert. Explain in 1 sentence."
-
-    # 1. Groq
+    Current Draft State: {current_state}
+    
+    YOUR RESPONSIBILITIES:
+    1. EXTRACT METADATA: If the user provides info (Title, Artist, Genre, etc.), update the JSON state.
+    2. VALIDATE: If the user uploads art with text that doesn't match the title, warn them.
+    3. EDUCATE: If the user asks "What is ISRC?", explain it simply.
+    4. GUIDE: Look at the 'Current Draft State'. Ask for the NEXT missing field politely.
+       - Order of importance: Title -> Artist -> Version -> Genre -> Date -> Label -> Cover Art -> Audio.
+    5. STYLE: Be casual, encouraging, and concise. Like a helpful studio engineer.
+    
+    OUTPUT FORMAT:
+    You must output a JSON object containing TWO keys:
+    1. "response": The text reply to the user.
+    2. "updates": A dictionary of fields to update (e.g., {"title": "Summer Vibes", "artist": "DJ Cloud"}). If no updates, return {}.
+    
+    EXAMPLE INPUT: "My song is called Midnight Coffee"
+    EXAMPLE OUTPUT:
+    {
+      "response": "Love that title! Is 'Midnight Coffee' a Single or part of an EP?",
+      "updates": {"title": "Midnight Coffee"}
+    }
+    """
+    
+    # Inject current state into prompt
+    state_str = json.dumps(st.session_state.data)
+    sys_prompt_fmt = system_prompt.replace("{current_state}", state_str)
+    
+    # 1. GROQ (Fastest)
     if "GROQ_API_KEY" in st.secrets:
         try:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+            # Format history for API
+            api_msgs = [{"role": "system", "content": sys_prompt_fmt}]
+            for m in messages:
+                api_msgs.append({"role": m["role"], "content": m["content"]})
+                
             res = client.chat.completions.create(
-                messages=[{"role":"system","content":sys_prompt},{"role":"user","content":prompt}],
-                model="llama-3.3-70b-versatile"
+                messages=api_msgs,
+                model="llama-3.3-70b-versatile",
+                response_format={"type": "json_object"} # Force JSON
             )
-            return res.choices[0].message.content, "Llama 3"
-        except: pass
+            return res.choices[0].message.content
+        except Exception as e:
+            print(f"Groq Error: {e}")
 
-    # 2. Gemini
-    if "GEMINI_API_KEY" in st.secrets:
-        try:
-            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            res = model.generate_content(prompt)
-            return res.text, "Gemini"
-        except: pass
-
-    # 3. GPT
+    # 2. OPENAI (Backup)
     if "OPENAI_API_KEY" in st.secrets:
         try:
             client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            api_msgs = [{"role": "system", "content": sys_prompt_fmt}]
+            for m in messages:
+                api_msgs.append({"role": m["role"], "content": m["content"]})
+                
             res = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role":"system","content":sys_prompt},{"role":"user","content":prompt}]
+                messages=api_msgs,
+                response_format={"type": "json_object"}
             )
-            return res.choices[0].message.content, "GPT-4"
+            return res.choices[0].message.content
         except: pass
 
-    # 4. Fallback
-    return get_fallback_answer(step_id)
+    # Fallback if no keys
+    return '{"response": "I am offline (Check API Keys).", "updates": {}}'
 
 # --- 4. STATE MANAGEMENT ---
 
@@ -210,243 +124,148 @@ def init():
     if "messages" not in st.session_state:
         st.session_state.update({
             "messages": [
-                {"role": "assistant", "content": "🔥 **Welcome to BandLab Distribution.**\n\nI am your AI A&R Agent. I'll guide you through the process.\n\nFirst, what is the **Release Title** of your song?"}
+                {"role": "assistant", "content": "👋 Hi! I'm your BandLab Release Agent.\n\nTell me about your new track. What's the title and genre?"}
             ],
-            "step": "S1_TITLE",
-            "edu_mode": False,
             "data": {
-                "title": "", "version": "", "artist": "xboggdan", "genre": "", 
-                "date": "ASAP", "label": "", "upc": "",
-                "composers": [], "performers": [], "producers": [],
-                "lang": "English", "explicit": "Clean", "isrc": "",
-                "cover": None, "audio": None
+                "title": None,
+                "artist": None,
+                "version": None,
+                "genre": None,
+                "date": None,
+                "upc": None,
+                "isrc": None,
+                "label": None,
+                "cover_status": "Missing",
+                "audio_status": "Missing"
             },
-            "temp_name": ""
+            "processing": False
         })
 
-def add_msg(role, content, is_edu=False, badge=None):
-    st.session_state.messages.append({
-        "role": role, 
-        "content": content, 
-        "is_edu": is_edu,
-        "badge": badge
-    })
+def process_user_input():
+    user_text = st.session_state.user_input
+    if not user_text: return
 
-def process_input(user_text=None, next_step_id=None, bot_text=None, data_key=None, data_val=None, list_append=None):
-    # 1. Record User
-    if user_text:
-        add_msg("user", user_text)
-    
-    # 2. Save Data
-    if data_key:
-        st.session_state.data[data_key] = data_val
-    if list_append:
-        st.session_state.data[list_append].append(data_val)
-        
-    # 3. Advance Step
-    if next_step_id:
-        st.session_state.step = next_step_id
-        add_msg("assistant", bot_text)
-        
-        # 4. Trigger Edu Mode
-        if st.session_state.edu_mode:
-            explanation, source = ask_ai(next_step_id)
-            if explanation:
-                add_msg("assistant", explanation, is_edu=True, badge=source)
-    
-    st.rerun()
+    # 1. Add User Message
+    st.session_state.messages.append({"role": "user", "content": user_text})
+    st.session_state.processing = True
 
-# --- 5. UI COMPONENTS (HTML RENDERING) ---
+def run_agent_logic():
+    if st.session_state.processing:
+        # 1. Call LLM with History
+        raw_json = call_llm(st.session_state.messages)
+        
+        try:
+            # 2. Parse JSON
+            parsed = json.loads(raw_json)
+            bot_reply = parsed.get("response", "I didn't quite catch that.")
+            updates = parsed.get("updates", {})
+            
+            # 3. Update State (The "Extraction" Magic)
+            for key, val in updates.items():
+                # Normalize keys to match our data structure
+                if key in st.session_state.data:
+                    st.session_state.data[key] = val
+            
+            # 4. Add Bot Message
+            st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+            
+        except:
+            st.session_state.messages.append({"role": "assistant", "content": "⚠️ Error parsing AI response."})
+        
+        st.session_state.processing = False
+        st.rerun()
+
+# --- 5. UI COMPONENTS ---
 
 def render_chat():
-    chat_html = '<div class="chat-container">'
-    
     for msg in st.session_state.messages:
-        # User Message
         if msg['role'] == "user":
-            chat_html += f'<div class="bubble user-bubble">{msg["content"]}</div>'
-        
-        # Educational Insight Card
-        elif msg.get('is_edu'):
-            chat_html += f"""
-            <div class="edu-card">
-                <div class="edu-icon">💡</div>
-                <div>
-                    {msg['content']}
-                    <span class="ai-badge">⚡ {msg['badge']}</span>
-                </div>
-            </div>
-            """
-        
-        # Bot Message
+            st.markdown(f"<div class='user-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
         else:
-            chat_html += f'<div class="bubble bot-bubble">{msg["content"]}</div>'
-            
-    chat_html += '</div>'
-    st.markdown(chat_html, unsafe_allow_html=True)
-
-# --- 6. MAIN APP FLOW ---
-
-init()
-
-# SIDEBAR
-with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=140)
+            st.markdown(f"<div class='bot-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
     
-    # Edu Toggle
-    st.markdown("### 🎓 Learning Mode")
-    mode = st.toggle("Enable AI Tips", value=st.session_state.edu_mode)
-    if mode != st.session_state.edu_mode:
-        st.session_state.edu_mode = mode
-        st.rerun()
+    # Invisible div to anchor scroll (optional hack)
+    st.markdown("<div id='end-of-chat'></div>", unsafe_allow_html=True)
+
+def render_dashboard():
+    st.markdown("### 💿 Live Draft")
+    d = st.session_state.data
+    
+    # Render Fields with Visual Status
+    fields = ["title", "artist", "genre", "version", "date", "label"]
+    for f in fields:
+        val = d.get(f)
+        status = "filled" if val else "missing"
+        val_display = val if val else "Required"
+        
+        st.markdown(f"""
+        <div class="draft-box">
+            <span>{f.title()}</span>
+            <span class="{status}">{val_display}</span>
+        </div>
+        """, unsafe_allow_html=True)
         
     st.divider()
-    if st.button("Reset Chat"):
+    
+    # Asset Status
+    c1, c2 = st.columns(2)
+    c1.metric("Cover Art", "✅" if d['cover_status'] == "Uploaded" else "❌")
+    c2.metric("Audio", "✅" if d['audio_status'] == "Uploaded" else "❌")
+    
+    st.divider()
+    if st.button("🔴 Hard Reset"):
         st.session_state.clear()
         st.rerun()
 
-# TITLE
-st.title("BandLab Distribution AI")
+# --- 6. MOCK FILE HANDLERS (Simulated AI Vision/Audio) ---
 
-# RENDER CHAT HISTORY
+def handle_uploads():
+    # Only show uploader if bot asks for it or context implies it
+    # For this demo, we put it in the sidebar or an expander to keep chat clean
+    with st.expander("📂 Asset Upload Zone (Drag & Drop)"):
+        cover = st.file_uploader("Cover Art", type=["jpg", "png"], key="u_cover")
+        if cover and st.session_state.data['cover_status'] == "Missing":
+            st.session_state.data['cover_status'] = "Uploaded"
+            # Simulate Vision AI Catching Mismatch
+            current_title = st.session_state.data.get('title', '')
+            if current_title and "Summer" not in current_title: 
+                # Inject a system event to force the bot to react
+                st.session_state.messages.append({
+                    "role": "system", 
+                    "content": f"SYSTEM EVENT: User uploaded cover art. Vision AI detected text 'Summer Vibes', but Draft Title is '{current_title}'. Mismatch detected."
+                })
+                st.session_state.processing = True
+                st.rerun()
+            else:
+                st.session_state.messages.append({"role": "system", "content": "SYSTEM EVENT: Cover art uploaded successfully. No text issues."})
+                st.session_state.processing = True
+                st.rerun()
+
+        audio = st.file_uploader("Audio File", type=["wav", "mp3"], key="u_audio")
+        if audio and st.session_state.data['audio_status'] == "Missing":
+            st.session_state.data['audio_status'] = "Uploaded"
+            st.session_state.messages.append({"role": "system", "content": "SYSTEM EVENT: Audio uploaded. Tech check passed (44.1kHz)."})
+            st.session_state.processing = True
+            st.rerun()
+
+# --- 7. MAIN APP FLOW ---
+
+init()
+
+# SIDEBAR DASHBOARD
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=140)
+    render_dashboard()
+    handle_uploads()
+
+# MAIN CHAT
+st.title("BandLab Distribution AI")
 render_chat()
 
-# INPUT LOGIC
-step = st.session_state.step
-d = st.session_state.data
+# INPUT AREA
+if not st.session_state.processing:
+    st.chat_input("Type your reply...", key="user_input", on_submit=process_user_input)
 
-# --- STEP 1: TITLE ---
-if step == "S1_TITLE":
-    if val := st.chat_input("Enter Song Title..."):
-        process_input(val, "S1_VERSION", "Does this release have a specific **Version** (e.g. Radio Edit)?", "title", val)
-
-# --- STEP 2: VERSION ---
-elif step == "S1_VERSION":
-    c1, c2 = st.columns(2)
-    if c1.button("No, Original Mix"):
-        process_input("Original Mix", "S1_GENRE", "Select the primary **Genre**.", "version", "")
-    if val := st.chat_input("Enter Version (e.g. Remix)..."):
-        process_input(val, "S1_GENRE", "Select the primary **Genre**.", "version", val)
-
-# --- STEP 3: GENRE ---
-elif step == "S1_GENRE":
-    genres = ["Hip Hop", "Pop", "Rock", "R&B", "Electronic", "Alternative", "Country", "Latin"]
-    cols = st.columns(4)
-    for i, g in enumerate(genres):
-        if cols[i%4].button(g, use_container_width=True):
-            process_input(g, "S1_DATE", "When should we release this?", "genre", g)
-
-# --- STEP 4: DATE ---
-elif step == "S1_DATE":
-    if st.button("ASAP (As Soon As Possible)"):
-        process_input("ASAP", "S1_UPC", "Do you have a **UPC Barcode**?", "date", "ASAP")
-    dval = st.date_input("Or Pick Date", label_visibility="collapsed")
-    if st.button("Confirm Date"):
-        process_input(str(dval), "S1_UPC", "Do you have a **UPC Barcode**?", "date", str(dval))
-
-# --- STEP 5: UPC ---
-elif step == "S1_UPC":
-    if st.button("Generate Free UPC"):
-        process_input("Generate Free", "S1_LABEL", "What is the **Record Label** name?", "upc", "AUTO")
-    if val := st.chat_input("Enter 12-digit UPC..."):
-        process_input(val, "S1_LABEL", "What is the **Record Label** name?", "upc", val)
-
-# --- STEP 6: LABEL ---
-elif step == "S1_LABEL":
-    if st.button(f"Use '{d['artist']}'"):
-        process_input(d['artist'], "S2_COMP_START", f"Credits: Is **{d['artist']}** the Composer (Songwriter)?", "label", d['artist'])
-    if val := st.chat_input("Enter Label Name..."):
-        process_input(val, "S2_COMP_START", f"Credits: Is **{d['artist']}** the Composer (Songwriter)?", "label", val)
-
-# --- STEP 7: COMPOSER START ---
-elif step == "S2_COMP_START":
-    c1, c2 = st.columns(2)
-    if c1.button("Yes, It's Me"):
-        st.session_state.data['composers'].append(d['artist'])
-        process_input("Yes", "S2_COMP_LOOP", "Composer added. Do you need to add anyone else?")
-    if c2.button("No / Someone Else"):
-        process_input("Someone Else", "S2_COMP_MANUAL", "Enter the Composer's **Legal Name**.")
-
-# --- STEP 8: COMPOSER MANUAL ---
-elif step == "S2_COMP_MANUAL":
-    if val := st.chat_input("Legal First & Last Name..."):
-        process_input(val, "S2_COMP_LOOP", "Composer added. Do you need to add anyone else?", list_append="composers", data_val=val)
-
-# --- STEP 9: COMPOSER LOOP ---
-elif step == "S2_COMP_LOOP":
-    c1, c2 = st.columns(2)
-    if c1.button("No, I'm Done"):
-        process_input("Done", "S2_PERF_START", f"Did **{d['artist']}** perform on this track?")
-    if c2.button("Add Another"):
-        process_input("Add Another", "S2_COMP_MANUAL", "Enter the next Composer's **Legal Name**.")
-
-# --- STEP 10: PERFORMER START ---
-elif step == "S2_PERF_START":
-    c1, c2 = st.columns(2)
-    if c1.button("Yes"):
-        st.session_state.temp_name = d['artist']
-        process_input("Yes", "S2_PERF_ROLE", f"What instrument did **{d['artist']}** play?")
-    if c2.button("No / Someone Else"):
-        process_input("Someone Else", "S2_PERF_MANUAL", "Enter the Performer's Name.")
-
-# --- STEP 11: PERFORMER ROLE ---
-elif step == "S2_PERF_ROLE":
-    roles = ["Vocals", "Guitar", "Bass", "Drums", "Keys", "Other"]
-    cols = st.columns(3)
-    for i, r in enumerate(roles):
-        if cols[i%3].button(r, use_container_width=True):
-            st.session_state.data['performers'].append({"name": st.session_state.temp_name, "role": r})
-            process_input(r, "S2_PERF_LOOP", "Performer added. Anyone else?")
-
-# --- STEP 12: PERFORMER MANUAL ---
-elif step == "S2_PERF_MANUAL":
-    if val := st.chat_input("Performer Name..."):
-        st.session_state.temp_name = val
-        process_input(val, "S2_PERF_ROLE", f"What instrument did **{val}** play?")
-
-# --- STEP 13: PERFORMER LOOP ---
-elif step == "S2_PERF_LOOP":
-    c1, c2 = st.columns(2)
-    if c1.button("Done"):
-        process_input("Done", "S2_LANG", "What is the **Lyrics Language**?")
-    if c2.button("Add Another"):
-        process_input("Add Another", "S2_PERF_MANUAL", "Enter the Performer's Name.")
-
-# --- STEP 14: LANGUAGE ---
-elif step == "S2_LANG":
-    c1, c2 = st.columns(2)
-    if c1.button("English"):
-        process_input("English", "S2_EXPL", "Is the content **Explicit**?", "lang", "English")
-    if c2.button("Instrumental (No Lyrics)"):
-        process_input("Instrumental", "S3_COVER", "Upload your **Cover Art**.", "lang", "Instrumental")
-
-# --- STEP 15: EXPLICIT ---
-elif step == "S2_EXPL":
-    c1, c2 = st.columns(2)
-    if c1.button("Clean / Safe"):
-        process_input("Clean", "S3_COVER", "Upload your **Cover Art**.", "explicit", "Clean")
-    if c2.button("Explicit (Parental Advisory)"):
-        process_input("Explicit", "S3_COVER", "Upload your **Cover Art**.", "explicit", "Explicit")
-
-# --- STEP 16: COVER ART ---
-elif step == "S3_COVER":
-    f = st.file_uploader("JPG/PNG 3000px", type=["jpg", "png"], label_visibility="collapsed")
-    if f:
-        st.session_state.data['cover'] = f
-        process_input("Image Uploaded", "S3_AUDIO", "Upload your **Master Audio** (WAV/MP3).")
-
-# --- STEP 17: AUDIO ---
-elif step == "S3_AUDIO":
-    f = st.file_uploader("WAV/MP3", type=["wav", "mp3"], label_visibility="collapsed")
-    if f:
-        st.session_state.data['audio'] = f
-        process_input("Audio Uploaded", "REVIEW", "🎉 All set! Review your release below.")
-
-# --- REVIEW ---
-elif step == "REVIEW":
-    st.write("---")
-    st.subheader("📝 Release Summary")
-    st.json(d)
-    if st.button("🚀 SUBMIT TO STORES", type="primary"):
-        st.balloons()
-        st.success("Submitted successfully!")
+# BACKGROUND LOGIC RUNNER
+if st.session_state.processing:
+    run_agent_logic()
