@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import time
+from PIL import Image
 
 # --- 1. SETUP & IMPORTS ---
 try:
@@ -10,262 +11,307 @@ try:
 except ImportError:
     pass
 
-# --- 2. CONFIGURATION ---
-st.set_page_config(page_title="BandLab AI Agent", page_icon="🔥", layout="centered")
+# --- 2. CONFIGURATION & STYLING ---
+st.set_page_config(page_title="BandLab Distribution AI", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #FFFFFF; color: #333; font-family: -apple-system, sans-serif; }
+    /* GLOBAL RESET */
+    .stApp { background-color: #FFFFFF; color: #333333; font-family: -apple-system, sans-serif; }
     
-    /* CHAT STYLING */
-    .user-bubble {
-        background: #F50000; color: white; padding: 10px 15px; border-radius: 18px 18px 0 18px;
-        margin: 5px 0 5px auto; max-width: 80%; width: fit-content;
-        box-shadow: 0 2px 5px rgba(245,0,0,0.2);
+    /* CHAT BUBBLES */
+    .user-msg {
+        background-color: #F50000; color: white; padding: 12px 18px; 
+        border-radius: 18px 18px 0 18px; margin: 8px 0 8px auto; 
+        max-width: 70%; width: fit-content; box-shadow: 0 2px 6px rgba(245,0,0,0.2);
     }
-    .bot-bubble {
-        background: #F3F4F6; color: #1F2937; padding: 10px 15px; border-radius: 18px 18px 18px 0;
-        margin: 5px auto 5px 0; max-width: 80%; width: fit-content;
-        border: 1px solid #E5E7EB;
+    .bot-msg {
+        background-color: #F3F4F6; color: #1F2937; padding: 12px 18px; 
+        border-radius: 18px 18px 18px 0; margin: 8px auto 8px 0; 
+        max-width: 70%; width: fit-content; border: 1px solid #E5E7EB;
     }
     
     /* DASHBOARD (SIDEBAR) */
-    .draft-box {
-        padding: 10px; background: #fafafa; border-radius: 8px; margin-bottom: 5px;
-        border: 1px solid #eee; font-size: 0.9em; display: flex; justify-content: space-between;
-    }
-    .missing { color: #F50000; font-weight: bold; }
-    .filled { color: #10B981; font-weight: bold; }
+    .status-group { margin-bottom: 20px; }
+    .status-header { font-size: 0.85em; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
     
-    /* HIDE STREAMLIT UI */
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    .field-row {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 8px 12px; background: #FAFAFA; border: 1px solid #EEEEEE;
+        border-radius: 8px; margin-bottom: 6px; font-size: 0.9em;
+    }
+    .field-name { font-weight: 500; color: #374151; }
+    
+    /* Status Badges */
+    .badge-missing { color: #DC2626; font-weight: 600; font-size: 0.8em; display: flex; align-items: center; gap: 4px; }
+    .badge-done { color: #059669; font-weight: 600; font-size: 0.8em; display: flex; align-items: center; gap: 4px; }
+    .badge-optional { color: #D97706; font-size: 0.8em; font-style: italic; }
+
+    /* DEMO BUTTONS */
+    .demo-btn { border: 1px solid #ddd; padding: 5px; border-radius: 5px; margin-bottom: 5px; font-size: 0.8em; cursor: pointer; text-align: center; background: #f9f9f9;}
+    .demo-btn:hover { background: #eee; }
+
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. THE LLM BRAIN (INTENT & EXTRACTION) ---
+# --- 3. THE "TRUE LLM" BRAIN ---
 
-def call_llm(messages, model_type="auto"):
+def call_llm_agent(messages, current_data):
     """
-    Sends chat history to LLM. 
-    Returns the raw text response.
-    """
-    # System Prompt: Defines the persona and the goal
-    system_prompt = """
-    You are 'DistroBot', an expert A&R Agent for BandLab.
-    Your goal is to help the user prepare a music release (Single/Album) for Spotify.
-    
-    Current Draft State: {current_state}
-    
-    YOUR RESPONSIBILITIES:
-    1. EXTRACT METADATA: If the user provides info (Title, Artist, Genre, etc.), update the JSON state.
-    2. VALIDATE: If the user uploads art with text that doesn't match the title, warn them.
-    3. EDUCATE: If the user asks "What is ISRC?", explain it simply.
-    4. GUIDE: Look at the 'Current Draft State'. Ask for the NEXT missing field politely.
-       - Order of importance: Title -> Artist -> Version -> Genre -> Date -> Label -> Cover Art -> Audio.
-    5. STYLE: Be casual, encouraging, and concise. Like a helpful studio engineer.
-    
-    OUTPUT FORMAT:
-    You must output a JSON object containing TWO keys:
-    1. "response": The text reply to the user.
-    2. "updates": A dictionary of fields to update (e.g., {"title": "Summer Vibes", "artist": "DJ Cloud"}). If no updates, return {}.
-    
-    EXAMPLE INPUT: "My song is called Midnight Coffee"
-    EXAMPLE OUTPUT:
-    {
-      "response": "Love that title! Is 'Midnight Coffee' a Single or part of an EP?",
-      "updates": {"title": "Midnight Coffee"}
-    }
+    The core intelligence. Uses the conversation history + current data state 
+    to decide on updates and the next response.
     """
     
-    # Inject current state into prompt
-    state_str = json.dumps(st.session_state.data)
-    sys_prompt_fmt = system_prompt.replace("{current_state}", state_str)
+    # 1. Define Fields Schema
+    required_fields = ["title", "artist", "genre", "version", "date", "explicit"]
+    optional_fields = ["label", "upc", "isrc"]
     
-    # 1. GROQ (Fastest)
-    if "GROQ_API_KEY" in st.secrets:
-        try:
+    # 2. System Prompt
+    system_prompt = f"""
+    You are DistroBot, an expert A&R Agent for BandLab.
+    
+    CURRENT METADATA STATE:
+    {json.dumps(current_data, indent=2)}
+    
+    YOUR GOAL:
+    Fill in all REQUIRED fields ({required_fields}) by chatting with the user.
+    OPTIONAL fields ({optional_fields}) can be skipped or auto-generated if the user asks.
+    
+    RULES:
+    1. **Extraction:** If the user says "My song is Midnight by DJ Cloud", extract BOTH Title and Artist immediately.
+    2. **Validation:** If the user provides a Title with "feat.", politely remove it and update the Title without it.
+    3. **Education:** If the user asks about a term (e.g. ISRC), explain it simply.
+    4. **Flow:** Look at what is MISSING in the State. Ask for the next missing REQUIRED field.
+    5. **Persona:** Helpful, professional, concise.
+    
+    OUTPUT FORMAT (JSON ONLY):
+    {{
+      "response": "Text reply to user...",
+      "updates": {{ "field_name": "value" }} 
+    }}
+    """
+    
+    # 3. Call AI API (Cascading Fallback)
+    try:
+        # Priority 1: Groq (Fastest)
+        if "GROQ_API_KEY" in st.secrets:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-            # Format history for API
-            api_msgs = [{"role": "system", "content": sys_prompt_fmt}]
-            for m in messages:
-                api_msgs.append({"role": m["role"], "content": m["content"]})
-                
+            # Format history
+            msgs = [{"role": "system", "content": system_prompt}] + [{"role": m["role"], "content": m["content"]} for m in messages]
             res = client.chat.completions.create(
-                messages=api_msgs,
                 model="llama-3.3-70b-versatile",
-                response_format={"type": "json_object"} # Force JSON
-            )
-            return res.choices[0].message.content
-        except Exception as e:
-            print(f"Groq Error: {e}")
-
-    # 2. OPENAI (Backup)
-    if "OPENAI_API_KEY" in st.secrets:
-        try:
-            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-            api_msgs = [{"role": "system", "content": sys_prompt_fmt}]
-            for m in messages:
-                api_msgs.append({"role": m["role"], "content": m["content"]})
-                
-            res = client.chat.completions.create(
-                model="gpt-4o",
-                messages=api_msgs,
+                messages=msgs,
                 response_format={"type": "json_object"}
             )
-            return res.choices[0].message.content
-        except: pass
+            return json.loads(res.choices[0].message.content)
+            
+        # Priority 2: Gemini
+        elif "GEMINI_API_KEY" in st.secrets:
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+            model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
+            chat = model.start_chat(history=[])
+            # Send system + last message logic
+            prompt = system_prompt + f"\n\nUSER MESSAGE: {messages[-1]['content']}"
+            res = chat.send_message(prompt)
+            return json.loads(res.text)
+            
+        # Priority 3: OpenAI
+        elif "OPENAI_API_KEY" in st.secrets:
+            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            msgs = [{"role": "system", "content": system_prompt}] + [{"role": m["role"], "content": m["content"]} for m in messages]
+            res = client.chat.completions.create(
+                model="gpt-4o",
+                messages=msgs,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(res.choices[0].message.content)
 
-    # Fallback if no keys
-    return '{"response": "I am offline (Check API Keys).", "updates": {}}'
+    except Exception as e:
+        return {"response": f"AI Error: {str(e)}", "updates": {}}
+
+    # Fallback Logic (Mock Agent) if offline
+    return manual_logic_fallback(messages[-1]['content'], current_data)
+
+def manual_logic_fallback(user_text, data):
+    """Simple offline logic if no API keys present"""
+    user_text = user_text.lower()
+    updates = {}
+    resp = "Got it."
+    
+    if "title" in user_text: updates["title"] = "Extracted Title"
+    if "artist" in user_text: updates["artist"] = "Extracted Artist"
+    
+    if not data["title"]: resp = "What is the Release Title?"
+    elif not data["artist"]: resp = "Who is the Main Artist?"
+    elif not data["genre"]: resp = "What is the Genre?"
+    else: resp = "Metadata looks good! Ready for assets."
+    
+    return {"response": resp, "updates": updates}
 
 # --- 4. STATE MANAGEMENT ---
 
-def init():
+def init_state():
     if "messages" not in st.session_state:
         st.session_state.update({
-            "messages": [
-                {"role": "assistant", "content": "👋 Hi! I'm your BandLab Release Agent.\n\nTell me about your new track. What's the title and genre?"}
-            ],
+            "messages": [{"role": "assistant", "content": "🔥 **Welcome to BandLab Distribution.**\n\nI'm your AI Agent. Tell me about your release (e.g., *\"I'm dropping a Pop single called 'Summer' by DJ X\"*) and I'll handle the paperwork."}],
             "data": {
+                # REQUIRED
                 "title": None,
                 "artist": None,
                 "version": None,
                 "genre": None,
                 "date": None,
+                "explicit": None,
+                # OPTIONAL
+                "label": None,
                 "upc": None,
                 "isrc": None,
-                "label": None,
-                "cover_status": "Missing",
-                "audio_status": "Missing"
+                # ASSETS
+                "cover_status": False,
+                "audio_status": False
             },
             "processing": False
         })
 
-def process_user_input():
-    user_text = st.session_state.user_input
-    if not user_text: return
-
+def process_input(user_input):
+    if not user_input: return
+    
     # 1. Add User Message
-    st.session_state.messages.append({"role": "user", "content": user_text})
-    st.session_state.processing = True
-
-def run_agent_logic():
-    if st.session_state.processing:
-        # 1. Call LLM with History
-        raw_json = call_llm(st.session_state.messages)
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    
+    # 2. Run AI Agent
+    with st.spinner("🤖 Agent analyzing intent..."):
+        result = call_llm_agent(st.session_state.messages, st.session_state.data)
         
-        try:
-            # 2. Parse JSON
-            parsed = json.loads(raw_json)
-            bot_reply = parsed.get("response", "I didn't quite catch that.")
-            updates = parsed.get("updates", {})
-            
-            # 3. Update State (The "Extraction" Magic)
-            for key, val in updates.items():
-                # Normalize keys to match our data structure
-                if key in st.session_state.data:
-                    st.session_state.data[key] = val
-            
-            # 4. Add Bot Message
-            st.session_state.messages.append({"role": "assistant", "content": bot_reply})
-            
-        except:
-            st.session_state.messages.append({"role": "assistant", "content": "⚠️ Error parsing AI response."})
+        # 3. Apply Updates
+        updates = result.get("updates", {})
+        for k, v in updates.items():
+            if k in st.session_state.data:
+                st.session_state.data[k] = v
         
-        st.session_state.processing = False
-        st.rerun()
+        # 4. Add Bot Response
+        st.session_state.messages.append({"role": "assistant", "content": result.get("response")})
+        
+    st.rerun()
 
 # --- 5. UI COMPONENTS ---
 
-def render_chat():
-    for msg in st.session_state.messages:
-        if msg['role'] == "user":
-            st.markdown(f"<div class='user-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div class='bot-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
-    
-    # Invisible div to anchor scroll (optional hack)
-    st.markdown("<div id='end-of-chat'></div>", unsafe_allow_html=True)
-
 def render_dashboard():
-    st.markdown("### 💿 Live Draft")
     d = st.session_state.data
     
-    # Render Fields with Visual Status
-    fields = ["title", "artist", "genre", "version", "date", "label"]
-    for f in fields:
+    st.markdown("### 💿 Live Draft")
+    
+    # REQUIRED SECTION
+    st.markdown("<div class='status-header'>Required Metadata</div>", unsafe_allow_html=True)
+    req_fields = ["title", "artist", "version", "genre", "date", "explicit"]
+    
+    for f in req_fields:
         val = d.get(f)
-        status = "filled" if val else "missing"
-        val_display = val if val else "Required"
-        
-        st.markdown(f"""
-        <div class="draft-box">
-            <span>{f.title()}</span>
-            <span class="{status}">{val_display}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    st.divider()
+        status_html = f"<span class='badge-done'>✓ {val}</span>" if val else "<span class='badge-missing'>⭕ Required</span>"
+        st.markdown(f"<div class='field-row'><span class='field-name'>{f.title()}</span>{status_html}</div>", unsafe_allow_html=True)
+
+    # OPTIONAL SECTION
+    st.markdown("<div class='status-header' style='margin-top:15px;'>Optional Metadata</div>", unsafe_allow_html=True)
+    opt_fields = ["label", "upc", "isrc"]
     
-    # Asset Status
-    c1, c2 = st.columns(2)
-    c1.metric("Cover Art", "✅" if d['cover_status'] == "Uploaded" else "❌")
-    c2.metric("Audio", "✅" if d['audio_status'] == "Uploaded" else "❌")
+    for f in opt_fields:
+        val = d.get(f)
+        status_html = f"<span class='badge-done'>{val}</span>" if val else "<span class='badge-optional'>Empty</span>"
+        st.markdown(f"<div class='field-row'><span class='field-name'>{f.upper()}</span>{status_html}</div>", unsafe_allow_html=True)
+
+    # ASSETS SECTION
+    st.markdown("<div class='status-header' style='margin-top:15px;'>Assets</div>", unsafe_allow_html=True)
     
-    st.divider()
-    if st.button("🔴 Hard Reset"):
-        st.session_state.clear()
+    c_stat = "✅ Uploaded" if d['cover_status'] else "❌ Missing"
+    a_stat = "✅ Uploaded" if d['audio_status'] else "❌ Missing"
+    
+    st.markdown(f"<div class='field-row'><span class='field-name'>Cover Art</span><span>{c_stat}</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='field-row'><span class='field-name'>Master Audio</span><span>{a_stat}</span></div>", unsafe_allow_html=True)
+
+def render_chat():
+    for msg in st.session_state.messages:
+        cls = "user-msg" if msg['role'] == "user" else "bot-msg"
+        st.markdown(f"<div class='{cls}'>{msg['content']}</div>", unsafe_allow_html=True)
+    
+    # Invisible anchor
+    st.markdown("<div id='end'></div>", unsafe_allow_html=True)
+
+# --- 6. DEMO SCENARIOS (THE "HAPPY PATHS") ---
+
+def trigger_demo(scenario):
+    st.session_state.messages = [] # Clear chat
+    # Reset Data
+    init_state() 
+    
+    if scenario == "1":
+        # The "One-Shot" Input
+        process_input("I want to release a Pop track called 'Midnight City' by DJ Cloud dropping tomorrow. It's the original mix.")
+    
+    elif scenario == "2":
+        # The "Education" Flow
+        st.session_state.messages.append({"role": "assistant", "content": "What is the Release Title?"})
+        process_input("Actually, I have a question. What is an ISRC code and do I need one?")
+        
+    elif scenario == "3":
+        # The "Validation" Flow (Simulated via upload context)
+        st.session_state.data['title'] = "Summer Vibes"
+        st.session_state.messages.append({"role": "assistant", "content": "Title set to 'Summer Vibes'. Please upload cover art."})
         st.rerun()
-
-# --- 6. MOCK FILE HANDLERS (Simulated AI Vision/Audio) ---
-
-def handle_uploads():
-    # Only show uploader if bot asks for it or context implies it
-    # For this demo, we put it in the sidebar or an expander to keep chat clean
-    with st.expander("📂 Asset Upload Zone (Drag & Drop)"):
-        cover = st.file_uploader("Cover Art", type=["jpg", "png"], key="u_cover")
-        if cover and st.session_state.data['cover_status'] == "Missing":
-            st.session_state.data['cover_status'] = "Uploaded"
-            # Simulate Vision AI Catching Mismatch
-            current_title = st.session_state.data.get('title', '')
-            if current_title and "Summer" not in current_title: 
-                # Inject a system event to force the bot to react
-                st.session_state.messages.append({
-                    "role": "system", 
-                    "content": f"SYSTEM EVENT: User uploaded cover art. Vision AI detected text 'Summer Vibes', but Draft Title is '{current_title}'. Mismatch detected."
-                })
-                st.session_state.processing = True
-                st.rerun()
-            else:
-                st.session_state.messages.append({"role": "system", "content": "SYSTEM EVENT: Cover art uploaded successfully. No text issues."})
-                st.session_state.processing = True
-                st.rerun()
-
-        audio = st.file_uploader("Audio File", type=["wav", "mp3"], key="u_audio")
-        if audio and st.session_state.data['audio_status'] == "Missing":
-            st.session_state.data['audio_status'] = "Uploaded"
-            st.session_state.messages.append({"role": "system", "content": "SYSTEM EVENT: Audio uploaded. Tech check passed (44.1kHz)."})
-            st.session_state.processing = True
-            st.rerun()
 
 # --- 7. MAIN APP FLOW ---
 
-init()
+init_state()
 
-# SIDEBAR DASHBOARD
+# SIDEBAR
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=140)
+    
+    # DASHBOARD
     render_dashboard()
-    handle_uploads()
+    
+    st.divider()
+    
+    # DEMO CONTROLS
+    st.markdown("### ⚡ Demo Scenarios")
+    if st.button("Scenario 1: One-Shot Extraction"): trigger_demo("1")
+    if st.button("Scenario 2: Contextual Education"): trigger_demo("2")
+    if st.button("Scenario 3: Ready for Upload"): trigger_demo("3")
+    
+    st.divider()
+    if st.button("Reset"):
+        st.session_state.clear()
+        st.rerun()
 
-# MAIN CHAT
+# MAIN CHAT AREA
 st.title("BandLab Distribution AI")
+
+# Render History
 render_chat()
 
-# INPUT AREA
-if not st.session_state.processing:
-    st.chat_input("Type your reply...", key="user_input", on_submit=process_user_input)
+# Asset Uploaders (Context Aware)
+# Only show if Title/Artist are set (Basic gatekeeping) or if user explicitly is at that stage
+if st.session_state.data.get("title"):
+    with st.expander("📂 Asset Upload Zone (Drag & Drop)", expanded=True):
+        c1, c2 = st.columns(2)
+        
+        # COVER ART
+        cover = c1.file_uploader("Cover Art (3000px)", type=["jpg", "png"], key="u_cover")
+        if cover and not st.session_state.data['cover_status']:
+            st.session_state.data['cover_status'] = True
+            # Simulate Vision AI
+            st.toast("👁️ Vision AI Scanning...", icon="🤖")
+            time.sleep(1)
+            st.session_state.messages.append({"role": "assistant", "content": "Cover Art received. Vision AI check passed (No explicit content detected)."})
+            st.rerun()
 
-# BACKGROUND LOGIC RUNNER
-if st.session_state.processing:
-    run_agent_logic()
+        # AUDIO
+        audio = c2.file_uploader("Audio (WAV)", type=["wav", "mp3"], key="u_audio")
+        if audio and not st.session_state.data['audio_status']:
+            st.session_state.data['audio_status'] = True
+            st.toast("🎧 Analyzing Audio...", icon="🎵")
+            time.sleep(1)
+            st.session_state.messages.append({"role": "assistant", "content": "Audio uploaded. 44.1kHz / 16-bit verified."})
+            st.rerun()
+
+# Chat Input
+st.chat_input("Type your reply...", key="u_in", on_submit=lambda: process_input(st.session_state.u_in))
