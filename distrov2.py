@@ -71,6 +71,8 @@ You are building this JSON object. Update it as you gather info.
 #### **B. Titles (Release/Track)**
 * [cite_start]**Forbidden:** Emojis, "feat" (use artist field instead), "produced by", "Official"[cite: 13, 14, 17, 18].
 * [cite_start]**Logic:** For a Single, Track Title MUST match Release Title[cite: 35, 36].
+* you need to allow user to input 1 word in the release title if they want to because this is allowed. 
+* 
 
 #### **C. Version Logic (New Standard)**
 * **Input:** User must choose from this list:
@@ -360,3 +362,4 @@ else:
 
 # CHAT INPUT
 st.chat_input("Type here...", key="u_in", on_submit=lambda: process_input(st.session_state.u_in))
+
