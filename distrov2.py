@@ -2,7 +2,120 @@ import streamlit as st
 import json
 import time
 
-# --- 1. SETUP & IMPORTS ---
+# --- 1. THE BRAIN (SYSTEM PROMPT) ---
+
+AGENT_SYSTEM_PROMPT = """
+You are **DistroBot**, a highly specialized A&R Compliance Agent for BandLab.
+Your goal is to guide the user through a Single Release submission, ensuring every field adheres to strict DSP (Spotify/Apple) metadata standards.
+
+### 1. CORE BEHAVIOR & TONE
+* **Role:** You are an expert consultant, not just a form filler.
+* **Tone:** Professional, encouraging, but strict on compliance.
+* **Method:** Ask for information conversationally. If the user provides invalid data (e.g., a one-word Composer name), **reject it politely**, explain WHY (DSP rules), and ask again.
+* **Scope:** You are handling a **Single Release**.
+
+### 2. DATA STRUCTURE (THE SOURCE OF TRUTH)
+You are building this JSON object. Update it as you gather info.
+{
+  "release": {
+    "title": null,      // Mandatory. No "feat", "prod", emojis.
+    "version": {
+        "type": null,   // From Fixed List. Default "Original".
+        "custom_text": null, // Only if type="Other"
+        "remaster_year": null, // Mandatory if type="Remastered"
+        "remix_confirmed": false // Mandatory if type="Remix"
+    },
+    "artist": "xboggdan", // Pre-filled/Locked.
+    "genre": null,      // Mandatory.
+    "date": "ASAP",     // Mandatory.
+    "label": null,      // Optional.
+    "upc": null,        // Optional.
+    "documentation": null // Optional (Proof of rights)
+  },
+  "track": {
+    "title": null,      // Locked to Release Title for Singles.
+    "is_cover": false,  // Logic check.
+    "released_before": {
+        "status": false,
+        "original_year": null // Mandatory if status=true (1900 to current-1)
+    },
+    "credits": {
+        "composers": [],   // Mandatory. LEGAL NAMES (First+Last).
+        "artists": [       // Mandatory. Max 4.
+            {"name": "xboggdan", "role": "Primary", "spotify_id": null, "apple_id": null}
+        ],
+        "performers": [],  // Mandatory. LEGAL NAMES + Instrument.
+        "production": [],  // Mandatory. LEGAL NAMES + Role.
+        "contributors": [] // Optional.
+    },
+    "lyrics": {
+        "language": null,     // Mandatory. If "Instrumental", skip rest.
+        "explicit_rating": null, // Mandatory if not Instrumental (Clean/Explicit/Non-Explicit).
+        "lyricist": []        // Mandatory if not Instrumental. LEGAL NAMES.
+    },
+    "isrc": null,       // Optional.
+    "publisher": null   // Optional.
+  }
+}
+
+### 3. VALIDATION RULES (STRICT ENFORCEMENT)
+
+#### **A. Names (Composers, Performers, Production, Lyricists, Contributors)**
+* **Rule:** MUST be a **Legal Name** (First Name + Last Name).
+* **Validation:** Reject inputs with only 1 word.
+* **Forbidden Chars:** `( ) { } [ ] \ / ! @ # $ % ^ & * + =`
+* **Forbidden Words:** "feat", "prod", "artist", "unknown", "beats".
+
+#### **B. Titles (Release/Track)**
+* **Forbidden:** Emojis, "feat" (use artist field instead), "produced by", "Official".
+* **Logic:** For a Single, Track Title MUST match Release Title.
+
+#### **C. Version Logic (New Standard)**
+* **Input:** User must choose from this list:
+    * *Alternate Take, Instrumental, Radio Edit, Extended, Remastered, Sped Up, Slowed Down, Lo-Fi, Acapella, Acoustic, Deluxe, Demo, Freestyle, Karaoke, Live, Remix, Slowed and Reverb, Other.*
+* **Conditionals:**
+    * If **Remastered**: You MUST ask for the "Original Release Year" (1900-Present).
+    * If **Remix**: You MUST ask user to confirm: "Do you have the rights to remix this track?" (Checkbox logic).
+    * If **Other**: Ask user to type the version (e.g., "Club Mix"). Validate forbidden words (no "Original", "Album", "Explicit").
+
+#### **D. "Released Before" Logic**
+* Ask: "Has this track been released before?"
+* If **Yes**: You MUST ask for the **Year of Original Recording** (Range: 1900 to Current Year - 1).
+
+#### **E. Lyrics & Explicit**
+* Ask: "What is the language of the lyrics?" (Or "Is it Instrumental?").
+* If **Instrumental**: Set `explicit_rating` = "Clean", `lyricist` = null.
+* If **Language Selected**:
+    1.  Ask: "Is the content Explicit, Clean, or Non-Explicit?"
+    2.  Ask: "Who is the Lyricist? (Legal First & Last Name required)."
+
+### 4. CONVERSATIONAL FLOW (THE HAPPY PATH)
+
+**Phase 1: Release Details**
+1.  **Title:** "What is the name of your song?" (Validate).
+2.  **Version:** "Is this the Original version, or a special version (like Remix, Live, etc.)?"
+    * *Agent:* Present options. Handle conditionals (Year/Confirmation) immediately if triggered.
+3.  **Genre:** "What is the primary genre?"
+4.  **Date:** "Releasing ASAP or a specific date?"
+5.  **Label/UPC:** "Do you have a Label or UPC, or should we auto-generate?"
+
+**Phase 2: Track & Credits (The Complex Part)**
+1.  **Composers:** "Who wrote the song? I need **Legal First and Last Names** for publishing rights."
+    * *Suggestion:* "Is it just you (Bogdan Hershall)?"
+2.  **Artists:** "You are the Main Artist. Any featured artists?"
+    * *Limit:* Max 4 Primary. Ask for Role (Primary/Feature) for new adds.
+3.  **Performers (Mandatory):** "Who played instruments or sang? (Legal Name + Instrument)."
+    * *Validation:* Reject 1-word names.
+4.  **Production (Mandatory):** "Who produced/mixed/mastered? (Legal Name + Role)."
+    * *Validation:* Reject 1-word names.
+5.  **History:** "Has this been released before?" (Handle Year logic).
+6.  **Lyrics:** "What language are the lyrics in?" (Handle Explicit/Lyricist logic).
+
+### 5. OUTPUT INSTRUCTIONS
+Always reply with a JSON object containing `response` (text to user) and `updates` (data to merge).
+"""
+
+# --- 2. SETUP & IMPORTS ---
 try:
     from groq import Groq
     import google.generativeai as genai
@@ -10,310 +123,239 @@ try:
 except ImportError:
     pass
 
-# --- 2. CONFIGURATION & STYLING ---
-st.set_page_config(page_title="BandLab Distribution AI", page_icon="🔥", layout="wide")
+st.set_page_config(page_title="BandLab Distro Agent", page_icon="🔥", layout="wide")
 
 st.markdown("""
 <style>
-    /* GLOBAL RESET */
+    /* BANDLAB STYLE OVERRIDES */
     .stApp { background-color: #FFFFFF; color: #333333; font-family: -apple-system, sans-serif; }
-    
-    /* WELCOME CARD (The Missing Piece) */
-    .welcome-container {
-        background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 16px;
-        padding: 40px; text-align: center; margin: 20px auto; max-width: 800px;
-    }
-    .welcome-title { font-size: 24px; font-weight: 800; margin-bottom: 10px; color: #111; }
-    .welcome-sub { color: #6B7280; margin-bottom: 30px; font-size: 16px; }
-    
-    /* CHAT BUBBLES */
-    .user-msg {
-        background-color: #F50000; color: white; padding: 12px 18px; 
-        border-radius: 18px 18px 0 18px; margin: 8px 0 8px auto; 
-        max-width: 75%; width: fit-content; box-shadow: 0 2px 6px rgba(245,0,0,0.2);
-    }
-    .bot-msg {
-        background-color: #F3F4F6; color: #1F2937; padding: 12px 18px; 
-        border-radius: 18px 18px 18px 0; margin: 8px auto 8px 0; 
-        max-width: 75%; width: fit-content; border: 1px solid #E5E7EB;
-    }
-    
-    /* DASHBOARD (SIDEBAR) */
-    .field-row {
-        display: flex; justify-content: space-between; align-items: center;
-        padding: 6px 10px; background: #FAFAFA; border: 1px solid #EEEEEE;
-        border-radius: 6px; margin-bottom: 4px; font-size: 0.85em;
-    }
-    .field-name { font-weight: 600; color: #4B5563; }
-    
-    /* STATUS BADGES */
-    .badge-req { color: #DC2626; font-weight: 700; font-size: 0.8em; } 
-    .badge-done { color: #059669; font-weight: 700; font-size: 0.8em; } 
-    .badge-opt { color: #9CA3AF; font-size: 0.8em; font-style: italic; }
-
-    /* START BUTTON */
-    .big-btn > button {
-        background-color: #F50000; color: white; font-size: 18px; font-weight: 600;
-        padding: 15px 30px; border-radius: 30px; border: none; width: 100%; transition: 0.3s;
-    }
-    .big-btn > button:hover { background-color: #d10000; transform: scale(1.02); }
-
+    .user-msg { background-color: #F50000; color: white; padding: 12px 18px; border-radius: 18px 18px 0 18px; margin: 8px 0 8px auto; max-width: 75%; box-shadow: 0 2px 6px rgba(245,0,0,0.2); }
+    .bot-msg { background-color: #F3F4F6; color: #1F2937; padding: 12px 18px; border-radius: 18px 18px 18px 0; margin: 8px auto 8px 0; max-width: 75%; border: 1px solid #E5E7EB; }
+    .field-row { display: flex; justify-content: space-between; align-items: center; padding: 8px; background: #FAFAFA; border-bottom: 1px solid #eee; font-size: 0.9em; }
+    .badge-req { color: #DC2626; font-weight: 700; } 
+    .badge-done { color: #059669; font-weight: 700; }
+    .big-btn > button { background-color: #F50000; color: white; font-weight: 600; padding: 12px; width: 100%; border-radius: 8px; border:none; }
+    .big-btn > button:hover { background-color: #d10000; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. THE "TRUE LLM" BRAIN ---
+# --- 3. AGENT LOGIC ---
 
-def call_llm_agent(messages, current_data):
-    """
-    Intelligent Agent that extracts intent and updates the JSON state.
-    """
-    req_fields = ["title", "artist", "genre", "date", "composers", "performers", "producers", "explicit"]
-    opt_fields = ["label", "upc", "isrc", "version"]
-    
-    system_prompt = f"""
-    You are DistroBot, an expert A&R Agent.
-    CURRENT STATE: {json.dumps(current_data, indent=2)}
-    GOAL: Fill REQUIRED ({req_fields}) first.
-    
-    LOGIC:
-    1. **Extract:** Pull data from user text. If they say "me" or "I did it", use '{current_data.get('artist', 'User')}'.
-    2. **Solo Artist:** If user implies they did everything, fill composers/performers/producers.
-    3. **Educate:** If user asks "What is X?", explain briefly.
-    
-    OUTPUT JSON:
-    {{ "response": "Text reply...", "updates": {{ "field": "value" }} }}
-    """
+def call_llm(messages, current_data):
+    # INJECT STATE INTO THE GOD PROMPT
+    final_prompt = AGENT_SYSTEM_PROMPT.replace("{current_state}", json.dumps(current_data, indent=2))
     
     try:
-        # GROQ
+        # 1. GROQ
         if "GROQ_API_KEY" in st.secrets:
             client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-            msgs = [{"role": "system", "content": system_prompt}] + [{"role": m["role"], "content": m["content"]} for m in messages]
+            msgs = [{"role": "system", "content": final_prompt}] + [{"role": m["role"], "content": m["content"]} for m in messages]
             res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, response_format={"type": "json_object"})
             return json.loads(res.choices[0].message.content)
             
-        # GEMINI
+        # 2. GEMINI
         elif "GEMINI_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
             model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
             chat = model.start_chat(history=[])
-            prompt = system_prompt + f"\n\nUSER MESSAGE: {messages[-1]['content']}"
-            res = chat.send_message(prompt)
+            prompt_payload = final_prompt + f"\n\nLATEST USER MESSAGE: {messages[-1]['content']}"
+            res = chat.send_message(prompt_payload)
             return json.loads(res.text)
-            
-        # OPENAI
+
+        # 3. OPENAI
         elif "OPENAI_API_KEY" in st.secrets:
             client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-            msgs = [{"role": "system", "content": system_prompt}] + [{"role": m["role"], "content": m["content"]} for m in messages]
+            msgs = [{"role": "system", "content": final_prompt}] + [{"role": m["role"], "content": m["content"]} for m in messages]
             res = client.chat.completions.create(model="gpt-4o", messages=msgs, response_format={"type": "json_object"})
             return json.loads(res.choices[0].message.content)
 
-    except Exception:
-        pass
+    except Exception as e:
+        return {"response": f"❌ Agent Error: {str(e)}", "updates": {}}
 
-    return mock_logic_fallback(messages[-1]['content'], current_data)
+    # Fallback for Demo Mode (No Keys)
+    return mock_logic(messages[-1]['content'])
 
-def mock_logic_fallback(text, data):
+def mock_logic(text):
     text = text.lower()
     updates = {}
-    if "title" in text: updates["title"] = "Extracted Title"
-    if "hip hop" in text: updates["genre"] = "Hip Hop"
-    if "start" in text: return {"response": "Great! What is the **Release Title**?", "updates": {}}
     
-    # Chaos Mock
+    # Validation Mock: Composer Name
+    if "composer" in text or "wrote" in text:
+        # Check if user provided 2 words
+        if len(text.split()) < 3 and "i did" not in text: # simple heuristic
+            return {
+                "response": "I need the **Legal First and Last Name** for the composer (e.g. 'John Doe'). Single names are not accepted for publishing.",
+                "updates": {}
+            }
+        # In a real scenario, we'd extract the specific name, here we just set a mock
+        updates["track"] = {"credits": {"composers": ["Mock Composer"]}}
+
+    # Version Logic Mock
+    if "remastered" in text:
+        return {
+            "response": "Since this is **Remastered**, what was the **Year of the Original Release**? (1900-2025)",
+            "updates": {"release": {"version": {"type": "Remastered"}}}
+        }
+    
+    if "1999" in text: # answering the year question
+        updates["release"] = {"version": {"remaster_year": 1999}}
+        return {
+            "response": "Got it. Original release 1999. Moving on...",
+            "updates": updates
+        }
+
+    # "Solo Artist" Shortcut Mock
+    if "i did everything" in text or "i did all" in text:
+        credits = {
+            "composers": ["Bogdan Hershall"],
+            "performers": [{"name": "Bogdan Hershall", "role": "Vocals"}],
+            "production": [{"name": "Bogdan Hershall", "role": "Producer"}]
+        }
+        return {
+            "response": "Understood. I've set **Bogdan Hershall** as the Composer, Performer, and Producer. \n\nIs the track **Instrumental** or does it have lyrics?",
+            "updates": {"track": {"credits": credits}}
+        }
+        
+    # Standard field extraction mocks
+    if "title" in text: updates["release"] = {"title": "Mock Title"}
+    if "hip hop" in text: updates["release"] = {"genre": "Hip Hop"}
+    
+    # Chaos Artist Mock
     if "chaos" in text:
-        updates["title"] = "Chaos Theory"
-        updates["artist"] = "DJ Entropy"
-        updates["genre"] = "Hyperpop"
-        return {"response": "Wow, lot of info! Caught: Title 'Chaos Theory' by DJ Entropy. Correct?", "updates": updates}
+        return {
+            "response": "Chaos input parsed! I found Title, Genre, and Date.", 
+            "updates": {"release": {"title": "Chaos Theory", "genre": "Hyperpop", "date": "Friday"}}
+        }
+        
+    return {"response": "I am in Offline/Demo Mode. Try saying 'I did everything' or 'Remastered' to test logic.", "updates": updates}
 
-    return {"response": "I am offline (No Keys). Please enter keys or use Demo Mode.", "updates": updates}
-
-# --- 4. STATE MANAGEMENT ---
+# --- 4. APP LOGIC ---
 
 def init_state():
     if "messages" not in st.session_state:
         st.session_state.update({
-            "messages": [], # Empty start for Welcome Screen logic
+            "messages": [],
             "data": {
-                "title": None, "artist": "xboggdan", "genre": None, "date": None,
-                "composers": [], "performers": [], "producers": [], "explicit": None, 
-                "version": None, "label": None, "upc": None, "isrc": None,
-                "cover_status": False, "audio_status": False
-            },
-            "processing": False
+                "release": {
+                    "title": None, "version": {"type": "Original"}, 
+                    "artist": "xboggdan", "genre": None, "date": None
+                },
+                "track": {
+                    "credits": {"composers": [], "performers": [], "production": []},
+                    "lyrics": {"explicit_rating": None},
+                    "released_before": {"status": False}
+                },
+                "assets": {"cover_status": False, "audio_status": False}
+            }
         })
 
-def process_input(user_input):
-    if not user_input: return
+def process_input(user_txt):
+    if not user_txt: return
+    st.session_state.messages.append({"role": "user", "content": user_txt})
     
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    
-    with st.spinner("🤖 analyzing intent..."):
-        result = call_llm_agent(st.session_state.messages, st.session_state.data)
+    with st.spinner("🤖 Agent Thinking..."):
+        result = call_llm(st.session_state.messages, st.session_state.data)
         
-        updates = result.get("updates", {})
-        for k, v in updates.items():
-            if k in st.session_state.data:
-                if isinstance(st.session_state.data[k], list) and not isinstance(v, list):
-                    st.session_state.data[k] = [v] if v else []
+        # Recursive Update Function
+        def update_nested(d, u):
+            for k, v in u.items():
+                if isinstance(v, dict):
+                    d[k] = update_nested(d.get(k, {}), v)
                 else:
-                    st.session_state.data[k] = v
-        
+                    d[k] = v
+            return d
+
+        update_nested(st.session_state.data, result.get("updates", {}))
+                    
         st.session_state.messages.append({"role": "assistant", "content": result.get("response")})
-        
     st.rerun()
 
-# --- 5. UI COMPONENTS ---
-
-def render_status_row(label, value, required=True):
-    status_class = "badge-req" if required and not value else "badge-done" if value else "badge-opt"
-    
-    if isinstance(value, list):
-        status_text = f"✓ {len(value)} ADDED" if len(value) > 0 else "⭕ REQUIRED" if required else "OPTIONAL"
-    elif value:
-        status_text = "✓ DONE"
-    elif required:
-        status_text = "⭕ REQUIRED"
-    else:
-        status_text = "OPTIONAL"
-            
-    st.markdown(f"<div class='field-row'><span class='field-name'>{label}</span><span class='{status_class}'>{status_text}</span></div>", unsafe_allow_html=True)
-
-def render_dashboard():
-    d = st.session_state.data
-    st.markdown("### 💿 Live Draft")
-    
-    st.markdown("<div style='font-size:0.8em; font-weight:800; color:#9CA3AF; margin:10px 0 5px 0;'>1. CORE DETAILS</div>", unsafe_allow_html=True)
-    render_status_row("Title", d['title'])
-    render_status_row("Artist", d['artist'])
-    render_status_row("Genre", d['genre'])
-    render_status_row("Date", d['date'])
-    
-    st.markdown("<div style='font-size:0.8em; font-weight:800; color:#9CA3AF; margin:10px 0 5px 0;'>2. CREDITS</div>", unsafe_allow_html=True)
-    render_status_row("Composers", d['composers'])
-    render_status_row("Performers", d['performers'])
-    render_status_row("Producers", d['producers'])
-    
-    st.markdown("<div style='font-size:0.8em; font-weight:800; color:#9CA3AF; margin:10px 0 5px 0;'>3. CONTENT</div>", unsafe_allow_html=True)
-    render_status_row("Explicit", d['explicit'])
-    render_status_row("Cover Art", d['cover_status'])
-    render_status_row("Audio", d['audio_status'])
-
-def render_chat():
-    for msg in st.session_state.messages:
-        cls = "user-msg" if msg['role'] == "user" else "bot-msg"
-        st.markdown(f"<div class='{cls}'>{msg['content']}</div>", unsafe_allow_html=True)
-    st.markdown("<div id='end'></div>", unsafe_allow_html=True)
-
-def render_welcome():
-    st.markdown("""
-    <div class="welcome-container">
-        <div style="font-size: 3em; margin-bottom: 10px;">🔥</div>
-        <div class="welcome-title">BandLab Distribution AI</div>
-        <div class="welcome-sub">I'm your automated A&R agent. I validate metadata, check artwork, and organize credits instantly.</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    c1, c2, c3 = st.columns([1,2,1])
-    with c2:
-        st.markdown('<div class="big-btn">', unsafe_allow_html=True)
-        if st.button("Start New Release", key="start_btn"):
-            st.session_state.messages.append({"role": "assistant", "content": "Let's go! What is the **Release Title**?"})
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# --- 6. DEMO SCENARIOS ---
-
-def trigger_demo(scenario):
-    st.session_state.messages = [] 
-    init_state() 
-    d = st.session_state.data
-    
-    # Helper to inject chat history
-    def sim_chat(user_txt, bot_txt, updates=None):
-        st.session_state.messages.append({"role": "user", "content": user_txt})
-        st.session_state.messages.append({"role": "assistant", "content": bot_txt})
-        if updates:
-            for k,v in updates.items(): d[k] = v
-
-    if scenario == "1":
-        d.update({"title": "Empire", "genre": "Hip Hop", "date": "ASAP", "explicit": "Explicit"})
-        st.session_state.messages.append({"role": "user", "content": "I want to release a Hip Hop single called 'Empire' by xboggdan dropping ASAP. It's explicit."})
-        st.session_state.messages.append({"role": "assistant", "content": "Got it! I've extracted: **Title:** Empire, **Genre:** Hip Hop, **Date:** ASAP, **Explicit:** Yes.\n\nNow for credits: Are you the sole writer, performer, and producer?"})
-
-    elif scenario == "2":
-        sim_chat("I'm releasing 'Neon Nights'", "Cool title! What genre is 'Neon Nights'?", {"title": "Neon Nights"})
-        sim_chat("It's Synthwave. I wrote and produced it all myself.", "Awesome. I've marked you as the **Composer**, **Producer**, and **Performer**. \n\nIs the content clean or explicit?", {"genre": "Synthwave", "composers": ["xboggdan"], "performers": ["xboggdan"], "producers": ["xboggdan"]})
-
-    elif scenario == "3": # Optional Sweep
-        d.update({"title": "Midnight", "genre": "Pop", "composers":["xboggdan"], "performers":["xboggdan"], "producers":["xboggdan"], "explicit":"Clean"})
-        sim_chat("Here is my Pop track 'Midnight'. All credits are me.", "Metadata complete! Now: Do you have a specific **Label Name** or **ISRC**? Or should I auto-generate them?")
-        sim_chat("Auto-generate please.", "Done! Generated ISRC and set Label to 'xboggdan'. Ready for assets!", {"label": "xboggdan", "isrc": "AUTO-GEN"})
-
-    elif scenario == "4": # Edits
-        sim_chat("Start a release for 'Blue Sky'", "Okay, 'Blue Sky'. What genre?", {"title": "Blue Sky"})
-        sim_chat("Actually change title to 'Grey Sky' and genre is Rock", "Updated: 'Grey Sky' (Rock). Who is the artist?", {"title": "Grey Sky", "genre": "Rock"})
-        sim_chat("It's me and my friend Dave on drums.", "Added you (xboggdan) and Dave (Drums). Anyone else?", {"performers": ["xboggdan", "Dave"]})
-        sim_chat("Wait, Dave quit. Remove him.", "Removed Dave. It's just you now.", {"performers": ["xboggdan"]})
-
-    elif scenario == "5": # Education
-        st.session_state.messages.append({"role": "assistant", "content": "What is the Release Title?"})
-        sim_chat("Wait, what is an ISRC?", "An ISRC is a unique digital fingerprint for tracking streams and royalties. \n\nSince you don't have one, I can generate it for free later. Now, back to business: What is the **Release Title**?")
-
-    elif scenario == "6": # Chaos
-        chaos = "yo the song is 'Pizza Party' its hyperpop and dropping next friday i wrote it with my mom but i produced it alone oh and its clean"
-        d.update({"title": "Pizza Party", "genre": "Hyperpop", "date": "Next Friday", "explicit": "Clean", "producers": ["xboggdan"], "composers": ["xboggdan", "Mom"]})
-        st.session_state.messages.append({"role": "user", "content": chaos})
-        st.session_state.messages.append({"role": "assistant", "content": "Wow, lot of info! I caught:\n- **Title:** Pizza Party\n- **Genre:** Hyperpop\n- **Date:** Next Friday\n- **Credits:** You (Producer), You + Mom (Writers)\n- **Clean:** Yes\n\nDid I miss anything?"})
-
-    st.rerun()
-
-# --- 7. MAIN APP FLOW ---
+# --- 5. RENDER UI ---
 
 init_state()
 
-# SIDEBAR
+# SIDEBAR DASHBOARD
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/BandLab_Technologies_logo.svg/2560px-BandLab_Technologies_logo.svg.png", width=140)
+    d = st.session_state.data
     
-    render_dashboard()
+    st.markdown("### 💿 Live Metadata Draft")
     
+    # Helper to render row
+    def row(lbl, val, req=True):
+        status = "✅" if val else ("⭕ Req" if req else "Optional")
+        if isinstance(val, list): status = f"✅ {len(val)}" if val else ("⭕ Req" if req else "Optional")
+        st.markdown(f"<div class='field-row'><b>{lbl}</b> <span>{status}</span></div>", unsafe_allow_html=True)
+
+    st.caption("RELEASE")
+    r = d.get('release', {})
+    row("Title", r.get('title')); row("Artist", r.get('artist')); row("Genre", r.get('genre'))
+    
+    st.caption("CREDITS")
+    t = d.get('track', {}).get('credits', {})
+    row("Composers", t.get('composers')); row("Producers", t.get('production'))
+    
+    st.caption("ASSETS")
+    a = d.get('assets', {})
+    row("Cover Art", a.get('cover_status')); row("Audio", a.get('audio_status'))
+
     st.divider()
-    st.markdown("### ⚡ Power Demos")
-    if st.button("1. One-Shot Entry"): trigger_demo("1")
-    if st.button("2. 'Solo Artist' Shortcut"): trigger_demo("2")
-    if st.button("3. Optional Sweep"): trigger_demo("3")
-    if st.button("4. Complex Editing"): trigger_demo("4")
-    if st.button("5. Educational Interrupt"): trigger_demo("5")
-    if st.button("6. Chaos Input"): trigger_demo("6")
+    # DEMO BUTTONS
+    st.markdown("### ⚡ Demo Scenarios")
     
-    st.divider()
+    def run_demo(scen_id):
+        st.session_state.messages = []
+        init_state()
+        if scen_id == 1:
+            process_input("I'm releasing a Hip Hop single called 'Empire' by xboggdan dropping ASAP.")
+        elif scen_id == 2:
+            st.session_state.data['release'].update({"title": "Neon", "genre": "Pop"})
+            st.session_state.messages.append({"role": "assistant", "content": "Title: Neon. Genre: Pop. Who worked on this?"})
+            process_input("I did everything myself.")
+        elif scen_id == 3: # Education
+            st.session_state.messages.append({"role": "assistant", "content": "What is the Release Title?"})
+            process_input("Wait, what is an ISRC? Do I need one?")
+        elif scen_id == 4: # Chaos
+             process_input("yo song is 'Pizza' genre hyperpop i wrote it with mom but produced alone dropping friday")
+        elif scen_id == 5: # Version Logic
+             st.session_state.data['release'].update({"title": "Old Song"})
+             st.session_state.messages.append({"role": "assistant", "content": "Title set. Is this the Original version?"})
+             process_input("No, it's Remastered.")
+
+        st.rerun()
+
+    if st.button("1. One-Shot Entry"): run_demo(1)
+    if st.button("2. Solo Artist Shortcut"): run_demo(2)
+    if st.button("3. Educational Pivot"): run_demo(3)
+    if st.button("4. Chaos Input"): run_demo(4)
+    if st.button("5. Version Logic Check"): run_demo(5)
     if st.button("Reset"): st.session_state.clear(); st.rerun()
 
-# MAIN AREA
+# MAIN SCREEN
 st.title("BandLab Distribution AI")
 
-# Show Welcome OR Chat
 if not st.session_state.messages:
-    render_welcome()
+    # WELCOME SCREEN
+    st.markdown("""
+    <div style="text-align:center; padding: 40px; background: #F9FAFB; border-radius: 12px; margin-bottom: 20px;">
+        <h2>👋 Hello, Artist.</h2>
+        <p style="color:#666;">I'm your AI Distribution Agent. You can speak naturally.</p>
+        <p><i>"I want to release a Pop song called 'Summer'..."</i></p>
+    </div>
+    """, unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.markdown('<div class="big-btn">', unsafe_allow_html=True)
+        if st.button("Start New Release"):
+            st.session_state.messages.append({"role": "assistant", "content": "Let's get started! What is the **Release Title**?"})
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
 else:
-    render_chat()
+    # CHAT SCREEN
+    for msg in st.session_state.messages:
+        cls = "user-msg" if msg['role'] == "user" else "bot-msg"
+        st.markdown(f"<div class='{cls}'>{msg['content']}</div>", unsafe_allow_html=True)
 
-# ASSET UPLOAD (Only if Title Set)
-if st.session_state.data.get("title"):
-    with st.expander("📂 Asset Upload Zone", expanded=True):
-        c1, c2 = st.columns(2)
-        cover = c1.file_uploader("Cover Art", type=["jpg", "png"], key="u_c")
-        if cover and not st.session_state.data['cover_status']:
-            st.session_state.data['cover_status'] = True
-            st.toast("Vision AI Check Passed", icon="✅")
-            st.rerun()
-        audio = c2.file_uploader("Audio", type=["wav", "mp3"], key="u_a")
-        if audio and not st.session_state.data['audio_status']:
-            st.session_state.data['audio_status'] = True
-            st.toast("Audio Analysis Complete", icon="✅")
-            st.rerun()
-
-# INPUT BAR
-st.chat_input("Type your reply...", key="u_in", on_submit=lambda: process_input(st.session_state.u_in))
+# CHAT INPUT
+st.chat_input("Type here...", key="u_in", on_submit=lambda: process_input(st.session_state.u_in))
